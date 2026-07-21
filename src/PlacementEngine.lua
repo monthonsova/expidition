@@ -860,9 +860,48 @@ local function pathCoverageCount(pos, pathPoints, range)
     return c
 end
 
+-- chokepoint: จุดบนทางที่มี "ช่วงทางอื่นรอบตัวเยอะสุด" (ทางโค้ง/วน/รวมเลน = มอนเดินผ่านนานสุด)
+-- = จุดที่วางยูนิตแล้วคุ้มที่สุด → ใช้เป็นศูนย์กลางกองยูนิตทั้งทีม
+local ANCHOR_COVER_RADIUS = 26
+local function computeTeamAnchor(pathPoints)
+    if typeof(pathPoints) ~= "table" or #pathPoints == 0 then
+        return nil
+    end
+    -- cache ต่อแมพ (key = จำนวนจุด + จุดแรก) กันคำนวณซ้ำทุกเฟรม
+    local key = tostring(#pathPoints) .. "|" .. tostring(pathPoints[1])
+    local cached = getgenv()._AE_TEAM_ANCHOR
+    if cached and cached.key == key and cached.pos then
+        return cached.pos
+    end
+    local bestPos, bestScore = nil, -1
+    local n = #pathPoints
+    -- จำกัด candidate ที่ทดสอบ ~200 จุด (แต่ยังนับ coverage เทียบทุกจุด) กัน path ยาวมากช้า
+    local candStep = math.max(1, math.floor(n / 200))
+    for i = 1, n, candStep do
+        local cp = pathPoints[i]
+        local cov = 0
+        for j = 1, n do
+            if distFlat(cp, pathPoints[j]) <= ANCHOR_COVER_RADIUS then
+                cov += 1
+            end
+        end
+        -- bias เบาๆ ไปต้น-กลางทาง: ยิงมอนได้นานกว่าวางท้ายทาง (ไม่ให้ไปกองสุดทาง)
+        local frac = i / n
+        local posBias = (frac <= 0.6) and 1.0 or (1.0 - (frac - 0.6) * 0.8)
+        local score = cov * posBias
+        if score > bestScore then
+            bestScore = score
+            bestPos = cp
+        end
+    end
+    getgenv()._AE_TEAM_ANCHOR = { key = key, pos = bestPos }
+    return bestPos
+end
+
 -- ยิ่งใกล้ = คะแนนยิ่งดี (เลขน้อยกว่า)
 -- น้ำหนัก: มอนใกล้ฐาน > ใกล้มอนทั่วไป > ใกล้ปลายทาง > ใกล้ทาง
 -- opts.range → ให้โบนัสจุดที่คลุม path ในระยะยิงได้มาก (smart placement)
+-- opts.anchor → ดึงจุดวางให้กองรอบ anchor เดียวกัน (cluster)
 local function scorePlacePosition(pos, enemies, pathPoints, pathEnds, threatEnemies, opts)
     opts = opts or {}
     local nearEnemy = _G.Settings["Place Near Enemies"] ~= false
@@ -890,6 +929,13 @@ local function scorePlacePosition(pos, enemies, pathPoints, pathEnds, threatEnem
         end
     end
 
+    -- cluster: ยิ่งไกล anchor คะแนนยิ่งแย่ → กองยูนิตรอบ chokepoint เดียวกัน (ไม่กระจายสุดทาง)
+    local clusterPenalty = 0
+    if opts.anchor then
+        local dAnchor = distFlat(pos, opts.anchor)
+        clusterPenalty = dAnchor * (opts.clusterWeight or 40)
+    end
+
     local score = 0
     if nearEnemy and #enemies > 0 then
         -- มอนที่ใกล้ฐานสำคัญสุด
@@ -901,13 +947,15 @@ local function scorePlacePosition(pos, enemies, pathPoints, pathEnds, threatEnem
             score += endDist * 0.35
         end
         score += pDist * 0.8
-        return score - coverBonus + noCoverPenalty
+        return score - coverBonus + noCoverPenalty + clusterPenalty
     end
     if nearPath and #pathPoints > 0 then
-        -- ไม่มีมอน: กันฐานก่อน (ปลายทาง) แล้วค่อยกระจายตามทาง + คลุม path มากสุด
-        return endDist * 3 + pDist * 2 + eDist - coverBonus + noCoverPenalty
+        -- ไม่มีมอน: คลุม path มากสุด + กองรอบ anchor (ไม่กระจายไปสุดทาง)
+        -- ลดน้ำหนัก endDist ลงเยอะเมื่อมี anchor เพราะ anchor คุมตำแหน่งอยู่แล้ว
+        local endW = opts.anchor and 0.5 or 3
+        return endDist * endW + pDist * 2 + eDist - coverBonus + noCoverPenalty + clusterPenalty
     end
-    return tDist + eDist + endDist + pDist - coverBonus + noCoverPenalty
+    return tDist + eDist + endDist + pDist - coverBonus + noCoverPenalty + clusterPenalty
 end
 
 local function unwrapNumber(v)
@@ -1058,9 +1106,36 @@ local function buildAAStylePlaceCFrames(asset, count)
     local useCover = smartOn and ((typeof(smartCfg) ~= "table") or smartCfg.RangeCoverage ~= false)
     local coverWeight = (typeof(smartCfg) == "table" and tonumber(smartCfg.CoverWeight)) or 8
     local stats = getUnitCombatStats(asset)
+
+    -- cluster: หา chokepoint จุดเดียว แล้วกองยูนิตทั้งทีมรอบนั้น (แก้ปัญหาวางกระจายสุดทาง)
+    local clusterOn = smartOn and ((typeof(smartCfg) ~= "table") or smartCfg.Cluster ~= false)
+    local clusterRadius = (typeof(smartCfg) == "table" and tonumber(smartCfg.ClusterRadius)) or 18
+    local clusterWeight = (typeof(smartCfg) == "table" and tonumber(smartCfg.ClusterWeight)) or 40
+    local anchor = (clusterOn and not stats.farm) and computeTeamAnchor(pathPoints) or nil
+
     local scoreOpts = nil
-    if useCover and not stats.farm then
-        scoreOpts = { range = stats.range, coverWeight = coverWeight, aoe = stats.aoe }
+    if (useCover or anchor) and not stats.farm then
+        scoreOpts = {
+            range = useCover and stats.range or nil,
+            coverWeight = coverWeight,
+            aoe = stats.aoe,
+            anchor = anchor,
+            clusterWeight = clusterWeight,
+        }
+    end
+
+    -- 0) กริดหนาแน่นรอบ anchor (chokepoint) — จุดวางหลักตอน cluster เปิด กองยูนิตชิดกัน
+    if anchor then
+        local ring = { 3, 5, 7, 9, 11, 13, 15 }
+        for _, r in ipairs(ring) do
+            if r <= clusterRadius then
+                for deg = 0, 315, 45 do
+                    local rad = math.rad(deg)
+                    table.insert(seeds, anchor + Vector3.new(math.cos(rad) * r, 0, math.sin(rad) * r))
+                end
+            end
+        end
+        table.insert(seeds, anchor)
     end
 
     -- 1) มอนใกล้ฐานก่อน (threat)
@@ -1170,7 +1245,8 @@ local function buildAAStylePlaceCFrames(asset, count)
     end)
 
     local hard = {}
-    local minSep = 4.0
+    -- cluster เปิด → ให้วางชิดกันได้มากขึ้น (กองแน่น) / ปิด → เว้นระยะเดิม
+    local minSep = anchor and 3.0 or 4.0
     local function farEnough(list, pos)
         for _, cf in ipairs(list) do
             if (cf.Position - pos).Magnitude < minSep then
@@ -1246,6 +1322,7 @@ local function buildAAStylePlaceCFrames(asset, count)
         local threatToBase = (#threat > 0 and #pathEnds > 0) and minDistToPoints(threat[1], pathEnds) or -1
         print("[AE Kaitun] points hard=", #hard, "| snap=", snapOk, "| seeds=", #seeds,
             "| enemies=", #enemies, "| threat=", #threat,
+            "| anchor=", anchor and string.format("(%.0f,%.0f)", anchor.X, anchor.Z) or "off",
             "| asset=", asset, "aoe=", stats.aoe, "range=", string.format("%.0f", stats.range),
             "| threat→base~=", typeof(threatToBase) == "number" and string.format("%.1f", threatToBase) or threatToBase,
             "| bestScore~=", typeof(best) == "number" and string.format("%.1f", best) or best,
@@ -1385,6 +1462,7 @@ PlacementEngine.getEnemyPositions = getEnemyPositions
 PlacementEngine.getPathEndPositions = getPathEndPositions
 PlacementEngine.getPathPoints = getPathPoints
 PlacementEngine.getThreatEnemies = getThreatEnemies
+PlacementEngine.computeTeamAnchor = computeTeamAnchor
 PlacementEngine.minDistToPoints = minDistToPoints
 PlacementEngine.getGameYen = getGameYen
 
