@@ -25,7 +25,18 @@ local getFarmState = AutoFarmManager.getFarmState
 local getStoryMaps = AutoFarmManager.getStoryMaps
 local getStoryActs = AutoFarmManager.getStoryActs
 local getStoryDifficulties = AutoFarmManager.getStoryDifficulties
+local getOrderedStoryMapList = AutoFarmManager.getOrderedStoryMapList
 local tryEnterGrindAfterMapClear = AutoFarmManager.tryEnterGrindAfterMapClear
+
+-- เพดานกันลูปหลุด: นับ "ทุกแมพ" ที่ตั้งไว้ (ไม่ใช่แค่แมพ active) × เผื่อ retry/soft-reset
+-- บั๊กเดิม: ใช้ buildStoryStageList (active map เดียว) ทำให้หยุดฟาร์มก่อนเคลียร์ครบทุกแมพ
+local function storyStageCeiling()
+    local maps = (getOrderedStoryMapList and getOrderedStoryMapList()) or {}
+    local nMaps = math.max(#maps, 1)
+    local nActs = math.max(#getStoryActs(), 1)
+    local nDiffs = math.max(#getStoryDifficulties(), 1)
+    return (nMaps * nActs * nDiffs) * 3 + 20
+end
 local startGame = Lobby.startGame
 local runInGame = InGame.runInGame
 
@@ -113,7 +124,7 @@ local function runStoryFarmLoop()
         end
     end
     local safety = 0
-    local maxStages = #buildStoryStageList() + 5
+    local maxStages = storyStageCeiling()
 
     while true do
         safety += 1
