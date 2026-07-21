@@ -79,10 +79,10 @@ local StatsUI = Loader.require("src/StatsUI.lua")
 local SmartPlay = Loader.require("src/SmartPlay.lua")
 local FarmLoop = Loader.require("src/FarmLoop.lua")
 
--- Activate Anti-AFK, Auto-Rejoin, and Auto-Exec Persistence
+-- Activate Anti-AFK, Auto-Rejoin, and Queue-On-Teleport Persistence
 AntiAFK.setupAntiAFK()
 AntiAFK.setupAutoRejoin()
-AntiAFK.installAutoExec(Loader.BaseUrl)
+AntiAFK.setupQueueOnTeleport(Loader.BaseUrl)
 
 -- Print Status
 print("[AE Kaitun Modular] loaded | PlaceId=", game.PlaceId)

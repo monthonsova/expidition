@@ -117,21 +117,20 @@ local function setupAutoRejoin()
 end
 
 -- ------------------------------------------------------------------------
--- 3. Auto-Exec Saver (Saves launcher to autoexec folder if supported)
+-- 3. Queue On Teleport Persistence (In-memory Teleport Persistence)
 -- ------------------------------------------------------------------------
-local function installAutoExec(baseUrl)
+local function setupQueueOnTeleport(baseUrl)
     pcall(function()
-        if writefile and isfolder and isfolder("autoexec") then
-            local scriptContent = string.format([[
--- AE Kaitun AutoExec Launcher
-if not getgenv()._AEKaitunLoaded then
-    _G.AEKaitun_BaseUrl = "%s"
-    loadstring(game:HttpGet(_G.AEKaitun_BaseUrl .. "init.lua"))()
-end
-]], baseUrl or "https://raw.githubusercontent.com/monthonsova/expidition/main/")
-
-            writefile("autoexec/AEKaitun_Expedition.lua", scriptContent)
-            print("[AE Kaitun] Auto-Exec script saved to autoexec/AEKaitun_Expedition.lua")
+        local queueFunc = queue_on_teleport or (syn and syn.queue_on_teleport) or (fluxus and fluxus.queue_on_teleport)
+        if queueFunc then
+            local scriptString = string.format([[
+                if not getgenv()._AEKaitunLoaded then
+                    _G.AEKaitun_BaseUrl = "%s"
+                    loadstring(game:HttpGet(_G.AEKaitun_BaseUrl .. "init.lua"))()
+                end
+            ]], baseUrl or "https://raw.githubusercontent.com/monthonsova/expidition/main/")
+            queueFunc(scriptString)
+            print("[AE Kaitun] queue_on_teleport registered for next teleport.")
         end
     end)
 end
@@ -139,6 +138,6 @@ end
 AntiAFK.setupAntiAFK = setupAntiAFK
 AntiAFK.setupAutoRejoin = setupAutoRejoin
 AntiAFK.triggerRejoin = triggerRejoin
-AntiAFK.installAutoExec = installAutoExec
+AntiAFK.setupQueueOnTeleport = setupQueueOnTeleport
 
 return AntiAFK
