@@ -31,7 +31,6 @@ local getSlotAsset = PlacementEngine.getSlotAsset
 local getSlotPlacementCost = PlacementEngine.getSlotPlacementCost
 local canAffordSlot = PlacementEngine.canAffordSlot
 local getHotbarSlots = PlacementEngine.getHotbarSlots
-local isFarmUnit = PlacementEngine.isFarmUnit
 local getEnemyPositions = PlacementEngine.getEnemyPositions
 local getPathEndPositions = PlacementEngine.getPathEndPositions
 local getPathPoints = PlacementEngine.getPathPoints
@@ -337,9 +336,6 @@ local function autoPlaceUnits()
 
     local delaySec = math.clamp(tonumber(_G.Settings["Place Delay"]) or 0.85, 0.75, 2.5)
     local maxPerSlot = tonumber(_G.Settings["Max Place Per Slot"]) or 4
-    local smartPlaceCfg = _G.Settings["Smart Placement"]
-    local smartPlaceOn = (typeof(smartPlaceCfg) ~= "table") or smartPlaceCfg.Enabled ~= false
-    local carryFirst = smartPlaceOn and ((typeof(smartPlaceCfg) ~= "table") or smartPlaceCfg.CarryFirst ~= false)
     local pointCache = {} -- asset -> { hard, t, idx }
     local skipAsset = {}
     local everPlaced = false
@@ -514,73 +510,8 @@ local function autoPlaceUnits()
                 continue
             end
 
-            -- เฟสวาง: 1) ดาเมจครบ Min → 2) ฟาร์มเงิน 1 ตัว → 3) ดาเมจต่อ
-            local farmPhaseOn = _G.Settings["Place Farm After Combat"] ~= false
-                or _G.Settings["Place Farm Last"] ~= false
-            local minCombat = math.max(1, tonumber(_G.Settings["Min Combat Before Farm"]) or 2)
-            local maxFarm = math.max(1, tonumber(_G.Settings["Max Farm Place"]) or 1)
-            local combatOnField = 0
-            local farmOnField = 0
-            local hasFarmSlot = false
-            for _, slot in ipairs(slots) do
-                local asset = getSlotAsset(slot)
-                if asset then
-                    if isFarmUnit(asset) then
-                        hasFarmSlot = true
-                        farmOnField += countOwnPlacedByAsset(asset)
-                    else
-                        combatOnField += countOwnPlacedByAsset(asset)
-                    end
-                end
-            end
-            local phase = 3
-            if farmPhaseOn then
-                if combatOnField < minCombat then
-                    phase = 1
-                elseif hasFarmSlot and farmOnField < maxFarm then
-                    phase = 2
-                else
-                    phase = 3
-                end
-            end
-            if attempts == 1 or attempts % 10 == 0 then
-                print("[AE Kaitun] PlacePhase=", phase,
-                    "| combat=", combatOnField, "/", minCombat,
-                    "| farm=", farmOnField, "/", maxFarm)
-            end
-
-            if phase == 2 then
-                table.sort(slots, function(a, b)
-                    local af = isFarmUnit(getSlotAsset(a)) and 0 or 1
-                    local bf = isFarmUnit(getSlotAsset(b)) and 0 or 1
-                    if af ~= bf then
-                        return af < bf
-                    end
-                    return getSlotPlacementCost(a) < getSlotPlacementCost(b)
-                end)
-            elseif phase == 3 and carryFirst then
-                -- เฟสดาเมจ (strategy Kaitun.lua): ฟาร์มไปท้าย → เน้นวาง Magical ก่อน → ถูกสุดก่อน (วางบอดี้ไว)
-                local magicalFirst = _G.Settings["Place Magical First"] ~= false
-                table.sort(slots, function(a, b)
-                    local aa, ba = getSlotAsset(a), getSlotAsset(b)
-                    local af = isFarmUnit(aa) and 1 or 0
-                    local bf = isFarmUnit(ba) and 1 or 0
-                    if af ~= bf then
-                        return af < bf
-                    end
-                    -- เน้นเลือกวาง Magical ก่อน
-                    if magicalFirst then
-                        local am = isMagicalUnit(aa) and 1 or 0
-                        local bm = isMagicalUnit(ba) and 1 or 0
-                        if am ~= bm then
-                            return am > bm
-                        end
-                    end
-                    -- ถูกสุดก่อน (ตาม Kaitun.lua — วางได้หลายตัวไว)
-                    return getSlotPlacementCost(a) < getSlotPlacementCost(b)
-                end)
-            end
-
+            -- strategy: slots มาเรียงมาแล้วจาก getAffordableSlotsOrdered (Magical ก่อน → แพง → ถูก)
+            -- วางเฉพาะบริเวณมอนที่เดินนำหน้าไกลสุด (buildAAStylePlaceCFrames สร้างจุดรอบ frontmost เท่านั้น)
             local placedThisRound = false
             local noPoint = 0
             local tried = 0
@@ -605,26 +536,9 @@ local function autoPlaceUnits()
                 local placedN = countOwnPlacedByAsset(asset)
                 local limit = getPlacementLimit(asset)
                 local cap = math.min(maxPerSlot, limit)
-                if isFarmUnit(asset) then
-                    cap = math.min(cap, maxFarm)
-                end
                 if placedN >= cap then
                     skipAsset[asset] = true
                     continue
-                end
-
-                -- phase1: ข้ามฟาร์ม | phase2: วางแค่ฟาร์ม | phase3: ข้ามฟาร์ม วางดาเมจ
-                if farmPhaseOn then
-                    local farm = isFarmUnit(asset)
-                    if phase == 1 and farm then
-                        continue
-                    end
-                    if phase == 2 and not farm then
-                        continue
-                    end
-                    if phase == 3 and farm then
-                        continue
-                    end
                 end
 
                 local afford = canAffordSlot(slot)
@@ -647,8 +561,8 @@ local function autoPlaceUnits()
                 local beforeOwned = countOwnPlacedUnits()
                 local beforeAsset = placedN
                 if attempts <= 3 or placedThisRound == false then
-                    print(("[AE Kaitun] Place %s %d/%d Yen=%s phase=%d"):format(
-                        tostring(asset), beforeAsset, cap, tostring(yenNow), phase
+                    print(("[AE Kaitun] Place %s %d/%d Yen=%s Magical=%s"):format(
+                        tostring(asset), beforeAsset, cap, tostring(yenNow), tostring(isMagicalUnit(asset))
                     ))
                 end
                 tried += 1
@@ -676,23 +590,6 @@ local function autoPlaceUnits()
                     everPlaced = true
                     failStreak = 0
                     pointCache = {}
-                    local gained = math.max(0, afterAsset - beforeAsset)
-                    if isFarmUnit(asset) then
-                        farmOnField += gained
-                        if farmOnField >= maxFarm then
-                            phase = 3
-                        end
-                    else
-                        combatOnField += gained
-                        if phase == 1 and combatOnField >= minCombat then
-                            if hasFarmSlot and farmOnField < maxFarm then
-                                phase = 2
-                                break
-                            else
-                                phase = 3
-                            end
-                        end
-                    end
                     if afterAsset >= cap then
                         skipAsset[asset] = true
                     end
