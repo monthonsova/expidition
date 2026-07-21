@@ -180,7 +180,10 @@ Clear mode ตั้ง `AutoNext=on` + `AutoRetry=off` → **ชนะไปต
 
 ### 6d-1. Rarity & ทีม Secret
 - ลำดับความหายากจริงในเกม (สูง→ต่ำ): **Secret > Exclusive > Mythic > Legendary > Epic > Rare** (`RARITY_RANK` ใน `Team.lua`/`SmartPlay.lua`)
-- **Secret/Exclusive ได้จาก evolution/event เท่านั้น — ไม่มีในแบนเนอร์สุ่ม** ดังนั้น "ทีม Secret" = สุ่ม Mythic → ฟีดเต็มเลเวล → evolve เป็น Secret
+- **แก้ความเข้าใจผิด (สำคัญ):** banner pool คือ `BannerData[banner].CurrentPool[rarity]` แยกตาม rarity → **บางแบนเนอร์มี `CurrentPool["Secret"]`/`["Exclusive"]` = สุ่มได้ Secret/Exclusive ตรงๆ** ไม่ใช่ได้จาก evolve อย่างเดียว
+- ดังนั้น "ทีม Secret" ได้ Secret 2 ทาง: (1) ซัมมอนติดตรงๆ ถ้าแบนเนอร์มีพูล (2) evolve Mythic→Secret (SmartPlay)
+- `Summon.shouldStopSummonMythicFirst()` โหมด Secret นับ **unique Secret + Exclusive + Mythic** เทียบเป้า (ติด Secret ตรงๆ = เข้าเป้าเร็วขึ้น) — helper: `Summon.countUniqueByRarityInBag(rarity)`, `Summon.getUnitsByRarityInBag(rarity)`
+- Debug: `AEKaitun.CountSecrets()` (คืน secret, exclusive), `AEKaitun.GetBannerSecrets()` (พูล Secret ของแบนเนอร์ปัจจุบัน)
 - `Team Mode = "Secret"` → `Team.ensureSecretTeam` → `buildSecretTeam` (เรียง Secret→Exclusive→Mythic→Legendary; getBestUnitsForTeam เรียงตาม RARITY_RANK อยู่แล้ว)
 - `SmartPlay.evolveTowardSecrets(cfg)`: สแกนยูนิตในทีม + Mythic ในกระเป๋า → หา `Evolutions:GetEvolvedUnit(asset)` ที่ผลลัพธ์เป็น Secret/Exclusive → เช็ควัตถุดิบ (`GetFilteredRecipe`) + เลเวล ≥ min(maxLv,50) → `TRY_EVOLVING_UNIT` (เปิด/ปิดด้วย `["Auto Evolve To Secret"]`)
 - Debug: `AEKaitun.EnsureSecretTeam()`, `AEKaitun.BuildSecretTeam()`, `AEKaitun.EvolveToSecret()`
@@ -244,6 +247,21 @@ Lv1 SchoolGrounds → Lv15 FlowerForest → Lv30 Dressrosa → Lv45 FairyKingFor
 - ชื่อ node equip-item จริง + ลำดับ argument (unit ก่อน item หรือกลับกัน / มี slot index ไหม)
 - คีย์ container จริง (`EquipmentData` หรืออื่น) + ชื่อ field ของ entry (`.ID`, `.EquippedTo`, `.Level`, `.Rarity`)
 - จำนวนช่อง equipment ต่อยูนิต (`ItemsPerUnit`)
+
+## 6g. Smart Placement — วางยูนิตแบบใช้กลยุทธ์ (`PlacementEngine.lua` + `InGame.lua`)
+
+เดิมวางตามระยะ (ใกล้ threat/มอน/ปลายทาง/ทาง) + เรียงช่องตามราคา (ถูกก่อน) — ดีเรื่องตำแหน่ง แต่ **ไม่ดูระยะยิงยูนิต** และ **ไม่เลือกวางตัวแรงก่อน**
+
+เพิ่ม 2 กลยุทธ์ (เปิด/ปิดที่ `Config["Smart Placement"]`):
+
+1. **Range coverage** (`RangeCoverage`) — `getUnitCombatStats(asset)` อ่าน `UnitUtils:GetUpgradeStats(asset,0)` (Damage/Range/SPA→DPS) แล้ว `scorePlacePosition` ให้โบนัสจุดที่ **คลุมช่วง path ในระยะยิงได้มากสุด** (`pathCoverageCount`) → ยูนิตยิงโดนมอนนานขึ้น = ดาเมจรวมสูงขึ้น (ตัวฟาร์มไม่ใช้ coverage — วางใกล้ฐานเหมือนเดิม)
+2. **Carry first** (`CarryFirst`) — เฟสดาเมจ (phase 3) เรียงช่องตาม **DPS สูงสุดก่อน** (ไม่ใช่ราคาถูกก่อน) → carry ลงสนาม + โดน AutoUpgrade ไว ; เฟสแรก (phase 1 สร้างบอดี้) / ฟาร์ม ยังคุมด้วยระบบ econ เดิม
+
+Config:
+```lua
+["Smart Placement"] = { Enabled=true, RangeCoverage=true, CarryFirst=true, CoverWeight=8 }
+```
+`CoverWeight` สูง = เน้นคลุม path มากกว่าเข้าไปจ่อมอน
 
 ## 7. จุดที่ยังเป็นข้อสังเกต (ความเสี่ยงต่ำ ไม่ได้แก้เพราะมี fallback ครอบอยู่แล้ว)
 

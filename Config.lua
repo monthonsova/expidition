@@ -67,8 +67,9 @@ local defaultSettings = {
         PreferShiny = true,
         PreferHighWorthiness = true,
     },
-    -- SmartPlay จะ evolve Mythic → Secret/Exclusive ให้ (ทั้งในทีมและกระเป๋า) ถ้าวัตถุดิบครบ
-    ["Auto Evolve To Secret"] = true,
+    -- SmartPlay จะ evolve Mythic → Secret/Exclusive ให้ ถ้าวัตถุดิบครบ
+    -- ปิดไว้ก่อน: evolve ต้องใช้ของจาก Challenge ที่ยังไม่ได้ทำ (เปิดทีหลังพร้อม TryEvolve)
+    ["Auto Evolve To Secret"] = false,
 
     -- Auto Equip: ใส่ไอเทมเสริม/อาวุธที่ดีที่สุด → ยูนิตแข็งสุดไล่ทั้งทีม
     -- เกม decompile ไม่ระบุชื่อ node/คีย์ equipment → โมดูล auto-discover ให้ตอนรัน
@@ -166,7 +167,7 @@ local defaultSettings = {
         SummonAmount = 10,
         FeedEquipped = true,
         FeedFoodPerUnit = 25,
-        TryEvolve = true,
+        TryEvolve = false, -- ปิดไว้ก่อน: evolve ต้องใช้ของจาก Challenge (เปิดทีหลัง)
         RemakeTeam = true,
         PreferBestUnits = true, -- ใส่ Mythic/Legendary เลเวลสูงสุดแทนลิสต์ Units เดิม
     },
@@ -186,6 +187,14 @@ local defaultSettings = {
     ["Min Combat Before Farm"] = 2,
     ["Auto Skip Waves"] = true,
     ["Auto Upgrade"] = true,
+
+    -- Smart Placement: วางแบบดูระยะยิง + วางตัว DPS สูงสุดก่อน
+    ["Smart Placement"] = {
+        Enabled = true,
+        RangeCoverage = true, -- ให้คะแนนจุดที่คลุม path ในระยะยิงยูนิตได้มากสุด (ยิงโดนนาน = โหด)
+        CarryFirst = true,    -- เฟสดาเมจ วางตัว DPS สูงสุดก่อน (ลงสนาม+อัปเกรดไว)
+        CoverWeight = 8,      -- น้ำหนักโบนัส coverage (สูง = เน้นคลุม path มากกว่าเข้าใกล้มอน)
+    },
 
     -- UI & Rewards
     ["Show Stats UI"] = true,

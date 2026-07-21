@@ -40,6 +40,7 @@ local minDistToPoints = PlacementEngine.minDistToPoints
 local getGameYen = PlacementEngine.getGameYen
 local buildAAStylePlaceCFrames = PlacementEngine.buildAAStylePlaceCFrames
 local canPlaceAt = PlacementEngine.canPlaceAt
+local getUnitCombatStats = PlacementEngine.getUnitCombatStats
 
 local getAutoFarm = AutoFarmManager.getAutoFarm
 local getGrindStage = AutoFarmManager.getGrindStage
@@ -335,6 +336,9 @@ local function autoPlaceUnits()
 
     local delaySec = math.clamp(tonumber(_G.Settings["Place Delay"]) or 0.85, 0.75, 2.5)
     local maxPerSlot = tonumber(_G.Settings["Max Place Per Slot"]) or 4
+    local smartPlaceCfg = _G.Settings["Smart Placement"]
+    local smartPlaceOn = (typeof(smartPlaceCfg) ~= "table") or smartPlaceCfg.Enabled ~= false
+    local carryFirst = smartPlaceOn and ((typeof(smartPlaceCfg) ~= "table") or smartPlaceCfg.CarryFirst ~= false)
     local pointCache = {} -- asset -> { hard, t, idx }
     local skipAsset = {}
     local everPlaced = false
@@ -550,6 +554,22 @@ local function autoPlaceUnits()
                     local bf = isFarmUnit(getSlotAsset(b)) and 0 or 1
                     if af ~= bf then
                         return af < bf
+                    end
+                    return getSlotPlacementCost(a) < getSlotPlacementCost(b)
+                end)
+            elseif phase == 3 and carryFirst then
+                -- เฟสดาเมจ: วางตัว DPS สูงสุดก่อน (carry ลงสนาม+อัปเกรดไว) ฟาร์มไปท้าย
+                table.sort(slots, function(a, b)
+                    local aa, ba = getSlotAsset(a), getSlotAsset(b)
+                    local af = isFarmUnit(aa) and 1 or 0
+                    local bf = isFarmUnit(ba) and 1 or 0
+                    if af ~= bf then
+                        return af < bf
+                    end
+                    local ad = getUnitCombatStats(aa).dps
+                    local bd = getUnitCombatStats(ba).dps
+                    if ad ~= bd then
+                        return ad > bd
                     end
                     return getSlotPlacementCost(a) < getSlotPlacementCost(b)
                 end)

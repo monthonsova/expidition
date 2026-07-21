@@ -228,6 +228,51 @@ local function countUniqueMythicsInBag()
     return n
 end
 
+-- generic: ยูนิตใน bag ตาม rarity ใดก็ได้ (Secret/Exclusive ได้จากซัมมอนตรงๆ ถ้าแบนเนอร์มี pool นั้น)
+local function getUnitsByRarityInBag(rarity)
+    local list = {}
+    local data = getPlayerData()
+    local unitData = data and data.UnitData
+    if typeof(unitData) ~= "table" then
+        return list
+    end
+    for id, u in pairs(unitData) do
+        if typeof(u) == "table" and u.Asset and getAssetRarity(u.Asset) == rarity then
+            table.insert(list, {
+                ID = id,
+                Asset = u.Asset,
+                Level = tonumber(u.Level) or 1,
+                Worthiness = tonumber(u.Worthiness) or 0,
+                Shiny = u.Shiny == true,
+                Rarity = rarity,
+            })
+        end
+    end
+    table.sort(list, function(a, b)
+        if a.Shiny ~= b.Shiny then
+            return a.Shiny
+        end
+        if a.Level ~= b.Level then
+            return a.Level > b.Level
+        end
+        return a.Worthiness > b.Worthiness
+    end)
+    return list
+end
+
+local function countUniqueByRarityInBag(rarity)
+    local seen = {}
+    local n = 0
+    for _, u in ipairs(getUnitsByRarityInBag(rarity)) do
+        local asset = tostring(u.Asset)
+        if not seen[asset] then
+            seen[asset] = true
+            n += 1
+        end
+    end
+    return n
+end
+
 -- เป้า Mythic คนละตัวตามเลเวล
 local function getSummonStopUniqueMythic()
     local lvl = getAccountLevel()
@@ -580,9 +625,17 @@ local function autoSummonAfterCodes()
     local teamMode = (teamModeModule and teamModeModule.getTeamMode and teamModeModule.getTeamMode())
         or tostring(_G.Settings["Team Mode"] or "Mythic")
 
-    -- Secret mode ก็สุ่มหา Mythic เหมือนกัน (Secret ได้จาก evolve Mythic เท่านั้น)
+    -- Secret mode: Secret/Exclusive ได้ทั้งจากซัมมอนตรงๆ (ถ้าแบนเนอร์มี pool) และ evolve Mythic
+    -- นับตัวหายากที่ใส่ทีมได้ทั้งหมด (Secret+Exclusive+Mythic) เทียบเป้า
     local function shouldStopSummonMythicFirst()
-        if (teamMode == "Mythic" or teamMode == "Secret") and stopMythic > 0 then
+        if teamMode == "Secret" then
+            local target = (stopMythic > 0) and stopMythic or stopLeg
+            local uniqueHigh = countUniqueByRarityInBag("Secret")
+                + countUniqueByRarityInBag("Exclusive")
+                + countUniqueMythicsInBag()
+            return uniqueHigh >= target
+        end
+        if teamMode == "Mythic" and stopMythic > 0 then
             return haveMythic >= stopMythic
         end
         return haveLeg >= stopLeg
@@ -614,6 +667,15 @@ local function autoSummonAfterCodes()
         stopMythic, stopLeg, haveMythic, haveLeg, lvl
     ))
     printBannerMythics(banner)
+    if teamMode == "Secret" then
+        local secPool = select(1, getBannerPoolByRarity(banner, "Secret"))
+        local exPool = select(1, getBannerPoolByRarity(banner, "Exclusive"))
+        print(("[AE Kaitun] Secret mode | แบนเนอร์นี้มี pool Secret=%d Exclusive=%d | มีในกระเป๋า Secret=%d Exclusive=%d")
+            :format(#secPool, #exPool, countUniqueByRarityInBag("Secret"), countUniqueByRarityInBag("Exclusive")))
+        if #secPool == 0 and #exPool == 0 then
+            print("[AE Kaitun] แบนเนอร์นี้ไม่มี Secret/Exclusive ในพูล → ต้อง evolve Mythic เอา (SmartPlay จัดให้)")
+        end
+    end
     ensureBagSpaceBeforeSummon(amount + 5)
     task.wait(1)
 
@@ -685,6 +747,8 @@ Summon.getSummonStopUniqueLegendary = getSummonStopUniqueLegendary
 Summon.getMythicUnitsInBag = getMythicUnitsInBag
 Summon.countUniqueMythicsInBag = countUniqueMythicsInBag
 Summon.getSummonStopUniqueMythic = getSummonStopUniqueMythic
+Summon.getUnitsByRarityInBag = getUnitsByRarityInBag
+Summon.countUniqueByRarityInBag = countUniqueByRarityInBag
 Summon.getSummonTeamUnitsInBag = getSummonTeamUnitsInBag
 Summon.getItemAmount = getItemAmount
 Summon.countUnitsByRarity = countUnitsByRarity

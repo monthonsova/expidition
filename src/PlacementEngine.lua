@@ -356,6 +356,38 @@ local function isFarmUnit(asset)
     return farm
 end
 
+-- สถิติต่อสู้ของยูนิต (Damage/Range/DPS) — ใช้เลือกตัววาง + ให้คะแนนจุดตามระยะยิง
+local combatStatsCache = {}
+local function getUnitCombatStats(asset)
+    if not asset or asset == "" then
+        return { damage = 0, range = 0, spa = 1, dps = 0, farm = false }
+    end
+    if combatStatsCache[asset] ~= nil then
+        return combatStatsCache[asset]
+    end
+    local out = { damage = 0, range = 0, spa = 1, dps = 0, farm = isFarmUnit(asset) }
+    pcall(function()
+        local UnitUtils = getCachedUnitUtils()
+        local stats = UnitUtils:GetUpgradeStats(asset, 0)
+        if typeof(stats) == "table" then
+            out.damage = tonumber(stats.Damage) or 0
+            out.range = tonumber(stats.Range or stats.Radius or stats.AttackRange) or 0
+            -- SPA = seconds per attack (ยิ่งน้อยยิ่งเร็ว) — เผื่อชื่อ field ต่างกัน
+            local spa = tonumber(stats.SPA or stats.Cooldown or stats.AttackSpeed or stats.AttackInterval)
+            if spa and spa > 0 then
+                out.spa = spa
+            end
+            out.dps = out.damage / out.spa
+        end
+    end)
+    -- range เริ่มต้นถ้าเกมไม่คืน (กันหารศูนย์/คะแนนเพี้ยน)
+    if out.range <= 0 then
+        out.range = 30
+    end
+    combatStatsCache[asset] = out
+    return out
+end
+
 local function getAffordableSlotsOrdered()
     local slots = getHotbarSlots()
     local ranked = {}
@@ -748,15 +780,38 @@ local function getThreatEnemies(enemies, pathEnds, maxN)
     return out
 end
 
+-- นับจำนวน "ช่วงทาง" ที่อยู่ในระยะยิงของยูนิต ณ ตำแหน่งนี้ (ยิ่งมาก = ยิงโดนมอนนานขึ้น = โหดขึ้น)
+local function pathCoverageCount(pos, pathPoints, range)
+    if not range or range <= 0 or typeof(pathPoints) ~= "table" then
+        return 0
+    end
+    local c = 0
+    for _, p in ipairs(pathPoints) do
+        if distFlat(pos, p) <= range then
+            c += 1
+        end
+    end
+    return c
+end
+
 -- ยิ่งใกล้ = คะแนนยิ่งดี (เลขน้อยกว่า)
 -- น้ำหนัก: มอนใกล้ฐาน > ใกล้มอนทั่วไป > ใกล้ปลายทาง > ใกล้ทาง
-local function scorePlacePosition(pos, enemies, pathPoints, pathEnds, threatEnemies)
+-- opts.range → ให้โบนัสจุดที่คลุม path ในระยะยิงได้มาก (smart placement)
+local function scorePlacePosition(pos, enemies, pathPoints, pathEnds, threatEnemies, opts)
+    opts = opts or {}
     local nearEnemy = _G.Settings["Place Near Enemies"] ~= false
     local nearPath = _G.Settings["Place Near Path"] ~= false
     local eDist = (#enemies > 0) and minDistToPoints(pos, enemies) or 9999
     local tDist = (threatEnemies and #threatEnemies > 0) and minDistToPoints(pos, threatEnemies) or eDist
     local pDist = (#pathPoints > 0) and distToNearestPath(pos, pathPoints) or 9999
     local endDist = (pathEnds and #pathEnds > 0) and minDistToPoints(pos, pathEnds) or 9999
+
+    -- โบนัส coverage: จุดที่ยูนิตยิงคลุมทางได้มากที่สุด (คะแนนน้อยลง = ดีขึ้น)
+    local coverBonus = 0
+    if opts.range and opts.range > 0 and #pathPoints > 0 then
+        local cov = pathCoverageCount(pos, pathPoints, opts.range)
+        coverBonus = cov * (opts.coverWeight or 8)
+    end
 
     local score = 0
     if nearEnemy and #enemies > 0 then
@@ -769,13 +824,13 @@ local function scorePlacePosition(pos, enemies, pathPoints, pathEnds, threatEnem
             score += endDist * 0.35
         end
         score += pDist * 0.8
-        return score
+        return score - coverBonus
     end
     if nearPath and #pathPoints > 0 then
-        -- ไม่มีมอน: กันฐานก่อน (ปลายทาง) แล้วค่อยกระจายตามทาง
-        return endDist * 3 + pDist * 2 + eDist
+        -- ไม่มีมอน: กันฐานก่อน (ปลายทาง) แล้วค่อยกระจายตามทาง + คลุม path มากสุด
+        return endDist * 3 + pDist * 2 + eDist - coverBonus
     end
-    return tDist + eDist + endDist + pDist
+    return tDist + eDist + endDist + pDist - coverBonus
 end
 
 local function unwrapNumber(v)
@@ -920,6 +975,17 @@ local function buildAAStylePlaceCFrames(asset, count)
     local halfY = size.Y / 2
     local seeds = {}
 
+    -- smart placement: ให้คะแนนจุดที่คลุม path ในระยะยิงได้มากสุด (ยกเว้นตัวฟาร์ม)
+    local smartCfg = _G.Settings["Smart Placement"]
+    local smartOn = (typeof(smartCfg) ~= "table") or smartCfg.Enabled ~= false
+    local useCover = smartOn and ((typeof(smartCfg) ~= "table") or smartCfg.RangeCoverage ~= false)
+    local coverWeight = (typeof(smartCfg) == "table" and tonumber(smartCfg.CoverWeight)) or 8
+    local stats = getUnitCombatStats(asset)
+    local scoreOpts = nil
+    if useCover and not stats.farm then
+        scoreOpts = { range = stats.range, coverWeight = coverWeight }
+    end
+
     -- 1) มอนใกล้ฐานก่อน (threat)
     for i = 1, #threat do
         local ep = threat[i]
@@ -1016,7 +1082,7 @@ local function buildAAStylePlaceCFrames(asset, count)
             if canPlaceAt(asset, cf) then
                 table.insert(candidates, {
                     cf = cf,
-                    score = scorePlacePosition(ground, enemies, pathPoints, pathEnds, threat),
+                    score = scorePlacePosition(ground, enemies, pathPoints, pathEnds, threat, scoreOpts),
                 })
             end
         end
@@ -1099,7 +1165,7 @@ local function buildAAStylePlaceCFrames(asset, count)
     local now = os.clock()
     if (getgenv()[key] or 0) + 6 < now then
         getgenv()[key] = now
-        local best = hard[1] and scorePlacePosition(hard[1].Position, enemies, pathPoints, pathEnds, threat) or -1
+        local best = hard[1] and scorePlacePosition(hard[1].Position, enemies, pathPoints, pathEnds, threat, scoreOpts) or -1
         local threatToBase = (#threat > 0 and #pathEnds > 0) and minDistToPoints(threat[1], pathEnds) or -1
         print("[AE Kaitun] points hard=", #hard, "| snap=", snapOk, "| seeds=", #seeds,
             "| enemies=", #enemies, "| threat=", #threat,
@@ -1236,6 +1302,7 @@ PlacementEngine.getSlotPlacementCost = getSlotPlacementCost
 PlacementEngine.canAffordSlot = canAffordSlot
 PlacementEngine.getHotbarSlots = getHotbarSlots
 PlacementEngine.isFarmUnit = isFarmUnit
+PlacementEngine.getUnitCombatStats = getUnitCombatStats
 PlacementEngine.getEnemyPositions = getEnemyPositions
 PlacementEngine.getPathEndPositions = getPathEndPositions
 PlacementEngine.getPathPoints = getPathPoints

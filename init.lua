@@ -188,6 +188,14 @@ getgenv().AEKaitun = {
     CountMythics = function()
         return #Summon.getMythicUnitsInBag()
     end,
+    CountSecrets = function()
+        return Summon.countUniqueByRarityInBag("Secret"),
+            Summon.countUniqueByRarityInBag("Exclusive")
+    end,
+    GetBannerSecrets = function()
+        local banner = _G.Settings["Summon Banner"] or "Standard"
+        return select(1, Summon.getBannerPoolByRarity(banner, "Secret"))
+    end,
     GetSummonTeam = Summon.getSummonTeamUnitsInBag,
     EnsureTeam = Team.ensureTeamReady,
     IsInGame = Replicas.isInGame,

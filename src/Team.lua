@@ -576,7 +576,7 @@ local function ensureMythicTeam()
 end
 
 -- Smart Secret Team: Secret ก่อน → Exclusive → Mythic → Legendary
--- Secret/Exclusive ได้จาก evolution เท่านั้น (SmartPlay จะ evolve Mythic→Secret ให้)
+-- Secret/Exclusive ได้ทั้งจากซัมมอน (ถ้าแบนเนอร์มี pool นั้น) และ evolve Mythic (SmartPlay จัดให้)
 local function buildSecretTeam()
     local cfg = getSmartSecretCfg()
     local slots = getUnlockedHotbarSlots()
@@ -614,7 +614,7 @@ local function buildSecretTeam()
         secretN, exclN, mythicN, legN, #slots
     ))
     if secretN == 0 then
-        print("[AE Kaitun] ยังไม่มี Secret (ได้จาก evolve เท่านั้น) — ใช้ Mythic/Leg ไปก่อน, SmartPlay จะพยายาม evolve")
+        print("[AE Kaitun] ยังไม่มี Secret (ได้จากซัมมอนถ้าแบนเนอร์มี หรือ evolve Mythic) — ใช้ Mythic/Leg ไปก่อน, SmartPlay จะ evolve ให้")
     end
     unequipAll()
     task.wait(0.4)

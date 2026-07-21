@@ -10,6 +10,8 @@ local Summon = _G.AEKaitun_Loader and _G.AEKaitun_Loader.require("src/Summon.lua
 
 local Nodes = Core.Nodes
 local Dependencies = Core.Dependencies
+local Actions = Core.Actions
+local ReplicatedStorage = Core.ReplicatedStorage
 local peek = Core.peek
 
 local isInGame = Replicas.isInGame
@@ -117,20 +119,72 @@ local function nodeIsFireable(node)
             or typeof(node.Fire) == "function")
 end
 
+-- Nodes เป็น proxy (metatable __index) → pairs() ว่าง ต้องเข้าผ่านชื่อ
+local function getNodeByName(name)
+    local ok, node = pcall(function()
+        return Nodes[name]
+    end)
+    if ok then
+        return node
+    end
+    return nil
+end
+
+-- enumerate ชื่อ node ทั้งหมด 3 ทาง (proxy table iterate ตรงไม่ได้)
+local nodeNameCache = nil
+local function enumerateNodeNames(force)
+    if nodeNameCache and not force then
+        return nodeNameCache
+    end
+    local names, seen = {}, {}
+    local function add(k)
+        if typeof(k) == "string" and k ~= "" and not seen[k] then
+            seen[k] = true
+            table.insert(names, k)
+        end
+    end
+    -- 1) pairs ตรง (เผื่อไม่ใช่ proxy)
+    pcall(function()
+        if typeof(Nodes) == "table" then
+            for k in pairs(Nodes) do
+                add(k)
+            end
+        end
+    end)
+    -- 2) proxy: metatable.__index เป็น table
+    pcall(function()
+        local mt = getmetatable(Nodes)
+        if typeof(mt) == "table" and typeof(mt.__index) == "table" then
+            for k in pairs(mt.__index) do
+                add(k)
+            end
+        end
+    end)
+    -- 3) RemoteEvent/Function instances จริง (ชื่อ = คีย์ node ในเกมนี้)
+    pcall(function()
+        for _, inst in ipairs(ReplicatedStorage:GetDescendants()) do
+            if inst:IsA("RemoteEvent") or inst:IsA("RemoteFunction")
+                or inst:IsA("UnreliableRemoteEvent")
+                or inst:IsA("BindableEvent") or inst:IsA("BindableFunction") then
+                add(inst.Name)
+            end
+        end
+    end)
+    nodeNameCache = names
+    return names
+end
+
 -- คืนลิสต์ชื่อ node ที่ match (equip / unequip) เรียงตามความน่าจะเป็น
 local function scanNodesForEquip()
     local equipHits, unequipHits = {}, {}
-    if typeof(Nodes) ~= "table" then
-        return equipHits, unequipHits
-    end
-    for name, node in pairs(Nodes) do
-        if typeof(name) == "string" and nodeIsFireable(node) then
-            local up = name:upper()
-            if up == "UNIT_EQUIP" or up == "UNIT_UNEQUIP_ALL" or up:find("LOAD_TEAM", 1, true) then
-                -- ยูนิต→hotbar / โหลดทีม ไม่ใช่ equip item
-            elseif up:find("UNEQUIP", 1, true) and nameMatchesItem(up) then
+    for _, name in ipairs(enumerateNodeNames()) do
+        local up = name:upper()
+        if up == "UNIT_EQUIP" or up == "UNIT_UNEQUIP_ALL" or up:find("LOAD_TEAM", 1, true) then
+            -- ยูนิต→hotbar / โหลดทีม ไม่ใช่ equip item
+        elseif up:find("EQUIP", 1, true) and nameMatchesItem(up) and nodeIsFireable(getNodeByName(name)) then
+            if up:find("UNEQUIP", 1, true) then
                 table.insert(unequipHits, name)
-            elseif up:find("EQUIP", 1, true) and nameMatchesItem(up) then
+            else
                 table.insert(equipHits, name)
             end
         end
@@ -141,6 +195,7 @@ local function scanNodesForEquip()
         if up:find("EQUIPMENT", 1, true) then return 5 end
         if up:find("ITEM", 1, true) then return 4 end
         if up:find("RELIC", 1, true) or up:find("GEAR", 1, true) then return 3 end
+        if up:find("ACCESSOR", 1, true) then return 2 end
         return 1
     end
     local function sorter(a, b)
@@ -160,19 +215,19 @@ local function discover(cfg, force)
     local container, containerKey = findContainer(cfg)
 
     local equipNode, equipNodeName
-    if cfg.EquipNode and nodeIsFireable(Nodes[cfg.EquipNode]) then
-        equipNode, equipNodeName = Nodes[cfg.EquipNode], cfg.EquipNode
+    if cfg.EquipNode and nodeIsFireable(getNodeByName(cfg.EquipNode)) then
+        equipNode, equipNodeName = getNodeByName(cfg.EquipNode), cfg.EquipNode
     end
     local equipHits, unequipHits = scanNodesForEquip()
     if not equipNode and equipHits[1] then
-        equipNode, equipNodeName = Nodes[equipHits[1]], equipHits[1]
+        equipNode, equipNodeName = getNodeByName(equipHits[1]), equipHits[1]
     end
 
     local unequipNode, unequipNodeName
-    if cfg.UnequipNode and nodeIsFireable(Nodes[cfg.UnequipNode]) then
-        unequipNode, unequipNodeName = Nodes[cfg.UnequipNode], cfg.UnequipNode
+    if cfg.UnequipNode and nodeIsFireable(getNodeByName(cfg.UnequipNode)) then
+        unequipNode, unequipNodeName = getNodeByName(cfg.UnequipNode), cfg.UnequipNode
     elseif unequipHits[1] then
-        unequipNode, unequipNodeName = Nodes[unequipHits[1]], unequipHits[1]
+        unequipNode, unequipNodeName = getNodeByName(unequipHits[1]), unequipHits[1]
     end
 
     discoverCache = {
@@ -421,7 +476,7 @@ local function dump()
         print("PlayerData keys =", table.concat(keys, ", "))
     end
 
-    -- ตัวอย่าง entry แรกใน container
+    -- ตัวอย่าง entry แรกใน container + กาง Stats subtable (หา field equip reference)
     if typeof(disc.container) == "table" then
         for id, e in pairs(disc.container) do
             print("sample equipment id =", tostring(id))
@@ -429,6 +484,14 @@ local function dump()
                 local fields = {}
                 for k, v in pairs(e) do
                     table.insert(fields, tostring(k) .. "=" .. tostring(v))
+                    if typeof(v) == "table" then
+                        local sub = {}
+                        for sk, sv in pairs(v) do
+                            table.insert(sub, tostring(sk) .. "=" .. tostring(sv))
+                        end
+                        table.sort(sub)
+                        print(("    %s.* : %s"):format(tostring(k), table.concat(sub, " | ")))
+                    end
                 end
                 table.sort(fields)
                 print("  fields:", table.concat(fields, " | "))
@@ -445,20 +508,61 @@ local function dump()
         end
     end
 
-    -- Nodes ทั้งหมดที่มีคำว่า EQUIP/ITEM/RELIC (เผื่อ scan หลัก match ไม่ครบ)
-    if typeof(Nodes) == "table" then
-        local related = {}
-        for name, node in pairs(Nodes) do
-            if typeof(name) == "string" and nodeIsFireable(node) then
-                local up = name:upper()
-                if up:find("EQUIP", 1, true) or up:find("ITEM", 1, true)
-                    or up:find("RELIC", 1, true) or up:find("GEAR", 1, true) then
-                    table.insert(related, name)
+    -- ตัวอย่าง UnitData entry — หา field ที่ยูนิตอ้างอิง equipment (Equipment/Items/Equipped)
+    if typeof(data) == "table" and typeof(data.UnitData) == "table" then
+        for id, u in pairs(data.UnitData) do
+            print("sample unit id =", tostring(id))
+            if typeof(u) == "table" then
+                local ufields = {}
+                for k, v in pairs(u) do
+                    table.insert(ufields, tostring(k) .. "=" .. tostring(v))
+                end
+                table.sort(ufields)
+                print("  unit fields:", table.concat(ufields, " | "))
+            end
+            break
+        end
+    end
+
+    -- enumerate node names ทั้งหมด (Nodes เป็น proxy → pairs ตรงว่าง)
+    local allNames = enumerateNodeNames(true)
+    print("node names ที่ enumerate ได้ (total) =", #allNames)
+    local broad = {}
+    for _, name in ipairs(allNames) do
+        local up = name:upper()
+        if up:find("EQUIP", 1, true) or up:find("ITEM", 1, true)
+            or up:find("ACCESSOR", 1, true) or up:find("GEAR", 1, true)
+            or up:find("RELIC", 1, true) or up:find("TRINKET", 1, true)
+            or up:find("ARTIFACT", 1, true) or up:find("WEAPON", 1, true)
+            or up:find("CHARM", 1, true) or up:find("STONE", 1, true)
+            or up:find("ENHANC", 1, true) or up:find("UPGRADE", 1, true) then
+            local fireable = nodeIsFireable(getNodeByName(name)) and "*" or ""
+            table.insert(broad, name .. fireable)
+        end
+    end
+    table.sort(broad)
+    print("Nodes ที่น่าสนใจ (equip/item/gear/... , * = fireable) =", table.concat(broad, ", "))
+
+    -- เผื่อ equip ไปทาง Fusion Actions แทน Nodes → ลิสต์คีย์ Actions ที่เกี่ยวข้อง
+    if typeof(Actions) == "table" then
+        local aHits, aAll = {}, {}
+        pcall(function()
+            for k, v in pairs(Actions) do
+                if typeof(k) == "string" then
+                    table.insert(aAll, k)
+                    local up = k:upper()
+                    if up:find("EQUIP", 1, true) or up:find("ITEM", 1, true)
+                        or up:find("ACCESSOR", 1, true) or up:find("GEAR", 1, true)
+                        or up:find("RELIC", 1, true) then
+                        table.insert(aHits, k .. "(" .. typeof(v) .. ")")
+                    end
                 end
             end
-        end
-        table.sort(related)
-        print("Nodes ที่เกี่ยวข้อง (EQUIP/ITEM/RELIC/GEAR) =", table.concat(related, ", "))
+        end)
+        table.sort(aHits)
+        table.sort(aAll)
+        print("Actions ที่เกี่ยวข้อง =", table.concat(aHits, ", "))
+        print("Actions ทั้งหมด =", table.concat(aAll, ", "))
     end
     print("==============================================")
     return disc
