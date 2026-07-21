@@ -1,6 +1,4 @@
---[[
---     AE Kaitun — Team & Hotbar Management Module
--- ]]
+-- --     AE Kaitun — Team & Hotbar Management Module
 
 local Team = {}
 local Core = _G.AEKaitun_Loader and _G.AEKaitun_Loader.require("src/Core.lua") or loadstring(readfile("expidition/src/Core.lua"))()

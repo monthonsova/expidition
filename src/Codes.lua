@@ -1,6 +1,4 @@
---[[
---     AE Kaitun — Codes Redeemer Module
--- ]]
+-- --     AE Kaitun — Codes Redeemer Module
 
 local Codes = {}
 

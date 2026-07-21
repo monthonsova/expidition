@@ -1,6 +1,4 @@
---[[
---     AE Kaitun — Auto Farm Progression Module
--- ]]
+-- --     AE Kaitun — Auto Farm Progression Module
 
 local AutoFarmManager = {}
 

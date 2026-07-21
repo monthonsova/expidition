@@ -1,6 +1,4 @@
---[[
-    AE Kaitun — Anime Expeditions Configuration
-]]
+-- AE Kaitun — Anime Expeditions Configuration
 
 if not _G.Settings then
     _G.Settings = {}

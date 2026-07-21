@@ -1,6 +1,4 @@
---[[
---     AE Kaitun — Placement Engine Module (Math, Pathing & CFrame Algorithms)
--- ]]
+-- --     AE Kaitun — Placement Engine Module (Math, Pathing & CFrame Algorithms)
 
 local PlacementEngine = {}
 

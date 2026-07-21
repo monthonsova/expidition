@@ -1,6 +1,4 @@
---[[
---     AE Kaitun — In-Game Combat & Unit Placement Module
--- ]]
+-- --     AE Kaitun — In-Game Combat & Unit Placement Module
 
 local InGame = {}
 

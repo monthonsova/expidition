@@ -1,6 +1,4 @@
---[[
---     AE Kaitun — Replicas & State Module
--- ]]
+-- --     AE Kaitun — Replicas & State Module
 
 local Replicas = {}
 local Core = _G.AEKaitun_Loader and _G.AEKaitun_Loader.require("src/Core.lua") or loadstring(readfile("expidition/src/Core.lua"))()

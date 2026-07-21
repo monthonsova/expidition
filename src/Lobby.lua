@@ -1,6 +1,4 @@
---[[
---     AE Kaitun — Lobby & Matchmaking Module
--- ]]
+-- --     AE Kaitun — Lobby & Matchmaking Module
 
 local Lobby = {}
 local Core = _G.AEKaitun_Loader and _G.AEKaitun_Loader.require("src/Core.lua") or loadstring(readfile("expidition/src/Core.lua"))()

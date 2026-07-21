@@ -1,6 +1,4 @@
---[[
---     AE Kaitun — Main Farm Loop Orchestrator (Optimized for 24/7 AFK)
--- ]]
+-- --     AE Kaitun — Main Farm Loop Orchestrator (Optimized for 24/7 AFK)
 
 local FarmLoop = {}
 

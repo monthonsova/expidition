@@ -1,7 +1,5 @@
---[[
---     AE Kaitun — Smart Play (fail recovery)
---     แพ้ติดกัน → เคลียร์กระเป๋า → สุ่ม → ฟีด/evolve → สร้างทีมใหม่จากยูนิตที่แรงสุด
--- ]]
+-- --     AE Kaitun — Smart Play (fail recovery)
+-- --     แพ้ติดกัน → เคลียร์กระเป๋า → สุ่ม → ฟีด/evolve → สร้างทีมใหม่จากยูนิตที่แรงสุด
 
 local SmartPlay = {}
 

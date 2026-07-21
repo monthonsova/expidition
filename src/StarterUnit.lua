@@ -1,6 +1,4 @@
---[[
---     AE Kaitun — Starter Unit Module
--- ]]
+-- --     AE Kaitun — Starter Unit Module
 
 local StarterUnit = {}
 local Core = _G.AEKaitun_Loader and _G.AEKaitun_Loader.require("src/Core.lua") or loadstring(readfile("expidition/src/Core.lua"))()

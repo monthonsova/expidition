@@ -1,6 +1,4 @@
---[[
---     AE Kaitun — Quests & Rewards Module
--- ]]
+-- --     AE Kaitun — Quests & Rewards Module
 
 local Rewards = {}
 

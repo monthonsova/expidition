@@ -1,6 +1,4 @@
---[[
---     AE Kaitun — Utils Module
--- ]]
+-- --     AE Kaitun — Utils Module
 
 local Utils = {}
 

@@ -1,10 +1,8 @@
---[[
---     AE Kaitun — Core Bootstrap Module
---     รวมของที่ทุกโมดูลต้องใช้ร่วมกัน (Services / Nodes / Dependencies / Shared /
---     Actions / ReplicaClient / peek / waitPeek / cached UnitUtils-Information)
---     ทุกโมดูลควร require ไฟล์นี้ไฟล์เดียว แล้วดึงเฉพาะของที่ใช้เป็น local ของตัวเอง
---     ห้ามพึ่งพา global เปล่าๆ ข้ามไฟล์ — เป็นสาเหตุบัค "attempt to index/call nil" ที่พบก่อนแก้
--- ]]
+-- --     AE Kaitun — Core Bootstrap Module
+-- --     รวมของที่ทุกโมดูลต้องใช้ร่วมกัน (Services / Nodes / Dependencies / Shared /
+-- --     Actions / ReplicaClient / peek / waitPeek / cached UnitUtils-Information)
+-- --     ทุกโมดูลควร require ไฟล์นี้ไฟล์เดียว แล้วดึงเฉพาะของที่ใช้เป็น local ของตัวเอง
+-- --     ห้ามพึ่งพา global เปล่าๆ ข้ามไฟล์ — เป็นสาเหตุบัค "attempt to index/call nil" ที่พบก่อนแก้
 
 local Core = {}
 

@@ -1,6 +1,4 @@
---[[
-    AE Kaitun — Anti-AFK, Auto-Rejoin & Duplicate Execution Guard
-]]
+-- AE Kaitun — Anti-AFK, Auto-Rejoin & Duplicate Execution Guard
 
 local AntiAFK = {}
 
