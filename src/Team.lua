@@ -15,6 +15,29 @@ local getPlayerData = Replicas.getPlayerData
 local getEquippedCount = Replicas.getEquippedCount
 local getSummonTeamUnitsInBag = Summon.getSummonTeamUnitsInBag
 
+-- DPS จริง (damage/spa) จาก PlacementEngine — lazy กัน circular, cache ref + ต่อ asset
+local placementCombatFn = nil
+local function getUnitDPS(asset)
+    if not asset or asset == "" then
+        return 0
+    end
+    if placementCombatFn == nil then
+        local ok, PE = pcall(function()
+            return _G.AEKaitun_Loader and _G.AEKaitun_Loader.require("src/PlacementEngine.lua")
+                or loadstring(readfile("expidition/src/PlacementEngine.lua"))()
+        end)
+        placementCombatFn = (ok and typeof(PE) == "table" and PE.getUnitCombatStats) or false
+    end
+    if not placementCombatFn then
+        return 0
+    end
+    local ok, stats = pcall(placementCombatFn, asset)
+    if ok and typeof(stats) == "table" then
+        return tonumber(stats.dps) or 0
+    end
+    return 0
+end
+
 local function getUnlockedHotbarSlots()
     local open = {}
     local hotbar = peek(Dependencies.HotbarState)
@@ -322,6 +345,7 @@ local function getSmartMythicCfg()
         FillWithLegendary = cfg.FillWithLegendary ~= false,
         ReplaceWeakUnits = cfg.ReplaceWeakUnits ~= false,
         PreferShiny = cfg.PreferShiny ~= false,
+        PreferHighDPS = cfg.PreferHighDPS ~= false,
         PreferHighWorthiness = cfg.PreferHighWorthiness ~= false,
     }
 end
@@ -337,6 +361,7 @@ local function getSmartSecretCfg()
         FillWithLegendary = cfg.FillWithLegendary ~= false, -- แล้วค่อย Legendary
         ReplaceWeakUnits = cfg.ReplaceWeakUnits ~= false,
         PreferShiny = cfg.PreferShiny ~= false,
+        PreferHighDPS = cfg.PreferHighDPS ~= false,
         PreferHighWorthiness = cfg.PreferHighWorthiness ~= false,
     }
 end
@@ -352,15 +377,21 @@ local function getTeamMode()
     return mode
 end
 
+-- คะแนนแบบชั้น: rarity ครอบทุกอย่าง (Mythic > Legendary เสมอ) → ภายในเรตเดียวกันใช้ DPS จริง
+-- → shiny → level → worthiness. สเกลกันล้น/กันข้ามเรต (double รับได้ ~9e15)
 local function unitScore(entry, cfg)
     cfg = cfg or getSmartMythicCfg()
-    local score = (entry.Rank or 0) * 1000000
-    if cfg.PreferShiny and entry.Shiny then
-        score += 50000
+    local score = (entry.Rank or 0) * 1e13
+    if cfg.PreferHighDPS ~= false and (entry.DPS or 0) > 0 then
+        -- normalize DPS → [0,1e12) ไม่ให้กระโดดข้ามชั้น rarity (1e13)
+        score += math.min(entry.DPS, 1e9) / 1e9 * 1e12
     end
-    score += (entry.Level or 1) * 100
+    if cfg.PreferShiny and entry.Shiny then
+        score += 5e11
+    end
+    score += math.min(entry.Level or 1, 99999) * 1e6
     if cfg.PreferHighWorthiness then
-        score += math.min(tonumber(entry.Worthiness) or 0, 999)
+        score += math.min(tonumber(entry.Worthiness) or 0, 999999)
     end
     return score
 end
@@ -383,6 +414,7 @@ local function equipAnyUnitsFallback()
                 Level = tonumber(u.Level) or 1,
                 Worthiness = tonumber(u.Worthiness) or 0,
                 Shiny = u.Shiny == true,
+                DPS = getUnitDPS(u.Asset),
                 Rank = RARITY_RANK[rarity] or 10,
                 Rarity = rarity,
             })
@@ -453,6 +485,7 @@ local function getBestUnitsForTeam(limit, opts)
                 Level = tonumber(u.Level) or 1,
                 Worthiness = tonumber(u.Worthiness) or 0,
                 Shiny = u.Shiny == true,
+                DPS = getUnitDPS(u.Asset),
                 Rarity = rarity,
                 Rank = rank,
             })

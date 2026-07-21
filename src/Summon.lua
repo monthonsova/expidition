@@ -406,16 +406,12 @@ local function getBannerMythicNames(banner)
     return names
 end
 
-local function getBagUnitsByRarities(rarities)
-    local want = {}
-    for _, r in ipairs(rarities or {}) do
-        want[tostring(r)] = true
-    end
+-- เซ็ต asset ที่ห้ามขาย (ตามลิสต์ Units + map ชื่อ UI → asset จริง)
+local function buildProtectedAssetSet()
     local protected = {}
     for _, name in ipairs(_G.Settings["Units"] or {}) do
         protected[tostring(name)] = true
     end
-    -- display → asset (กันขายยูนิตทีมถ้าใส่ชื่อ UI)
     local displayMap = {
         ["Ramen Guy"] = "Ichiraku",
         ["Scissor"] = "Riyo",
@@ -431,6 +427,63 @@ local function getBagUnitsByRarities(rarities)
             protected[asset] = true
         end
     end
+    return protected
+end
+
+-- ยิงขายชุด id (ASSET_SELL_TABLE → UNIT_SELL_TABLE → ทีละตัว) คืนจำนวนที่ส่งขาย
+local function bulkSellUnitIds(ids)
+    if #ids == 0 then
+        return 0
+    end
+    local idMap = {}
+    for _, id in ipairs(ids) do
+        idMap[id] = true
+    end
+
+    local okBulk = pcall(function()
+        Nodes.ASSET_SELL_TABLE:FireServer("Unit", idMap)
+    end)
+    if okBulk then
+        print("[AE Kaitun] ส่งขายชุดเดียวแล้ว", #ids, "ตัว (ASSET_SELL_TABLE)")
+        task.wait(1.2)
+        return #ids
+    end
+
+    okBulk = pcall(function()
+        Nodes.UNIT_SELL_TABLE:FireServer(idMap)
+    end)
+    if okBulk then
+        print("[AE Kaitun] ส่งขายชุดเดียวแล้ว", #ids, "ตัว (UNIT_SELL_TABLE)")
+        task.wait(1.2)
+        return #ids
+    end
+
+    warn("[AE Kaitun] ขายชุดไม่ได้ — ขายทีละตัว (หน่วง 0.7 วิ)")
+    local sold = 0
+    for _, id in ipairs(ids) do
+        if isInGame() then
+            break
+        end
+        local ok = pcall(function()
+            Nodes.UNIT_SELL:FireServer(id)
+        end)
+        if ok then
+            sold += 1
+        end
+        task.wait(0.7)
+    end
+    print("[AE Kaitun] ส่งขายแล้ว", sold, "/", #ids, "ตัว")
+    task.wait(0.5)
+    return sold
+end
+
+local function getBagUnitsByRarities(rarities, opts)
+    opts = opts or {}
+    local want = {}
+    for _, r in ipairs(rarities or {}) do
+        want[tostring(r)] = true
+    end
+    local protected = buildProtectedAssetSet()
 
     local list = {}
     local data = getPlayerData()
@@ -438,9 +491,15 @@ local function getBagUnitsByRarities(rarities)
     if typeof(unitData) ~= "table" then
         return list
     end
+    -- shiny หายาก/สตัทดีกว่า → กันขายเป็นค่าเริ่มต้น (ตั้ง Keep Shiny=false ถ้าอยากขาย)
+    -- opts.includeShiny = ยอมขาย shiny (last resort ตอนกระเป๋าเต็มจนสุ่มไม่ได้)
+    local keepShiny = (_G.Settings["Keep Shiny"] ~= false) and not opts.includeShiny
     for id, u in pairs(unitData) do
         if typeof(u) == "table" and u.Asset then
             if u.Equipped or u.Locked or u.Favorite then
+                continue
+            end
+            if keepShiny and u.Shiny == true then
                 continue
             end
             if protected[u.Asset] then
@@ -452,6 +511,7 @@ local function getBagUnitsByRarities(rarities)
                     ID = id,
                     Asset = u.Asset,
                     Rarity = rarity,
+                    Shiny = u.Shiny == true,
                 })
             end
         end
@@ -459,13 +519,13 @@ local function getBagUnitsByRarities(rarities)
     return list
 end
 
-local function sellBagByRarities(rarities)
+local function sellBagByRarities(rarities, opts)
     if isInGame() then
         warn("[AE Kaitun] อยู่ในแมตช์ — ไม่ขายกระเป๋า")
         return 0
     end
     rarities = rarities or _G.Settings["Sell Bag Rarities"] or { "Rare", "Epic" }
-    local targets = getBagUnitsByRarities(rarities)
+    local targets = getBagUnitsByRarities(rarities, opts)
     if #targets == 0 then
         print("[AE Kaitun] ไม่มี", table.concat(rarities, "/"), "ในกระเป๋าให้ขาย")
         return 0
@@ -473,56 +533,100 @@ local function sellBagByRarities(rarities)
 
     print("[AE Kaitun] ขายกระเป๋า", table.concat(rarities, "/"), "=", #targets, "ตัว")
 
-    -- รูปแบบเดียวกับ Quick Sell ในเกม: ASSET_SELL_TABLE("Unit", { [id] = true, ... })
-    local idMap = {}
+    local ids = {}
     for _, u in ipairs(targets) do
-        idMap[u.ID] = true
+        table.insert(ids, u.ID)
         print("[AE Kaitun] ขาย", u.Rarity, u.Asset, "id=", u.ID)
     end
+    return bulkSellUnitIds(ids)
+end
 
-    local okBulk = pcall(function()
-        Nodes.ASSET_SELL_TABLE:FireServer("Unit", idMap)
-    end)
-    if okBulk then
-        print("[AE Kaitun] ส่งขายชุดเดียวแล้ว", #targets, "ตัว (ASSET_SELL_TABLE)")
-        task.wait(1.2)
-        return #targets
+-- ขายยูนิตซ้ำ Asset (เก็บตัวดีสุด: shiny → level → worthiness) — default เฉพาะ Legendary
+-- ทำงานในทุกรอบ auto-sell ไม่ต้องรอกระเป๋าเต็ม (respect Keep Shiny + protected list)
+local function sellDuplicateUnits(rarities)
+    if isInGame() then
+        warn("[AE Kaitun] อยู่ในแมตช์ — ไม่ขายตัวซ้ำ")
+        return 0
+    end
+    local want = {}
+    for _, r in ipairs(rarities or { "Legendary" }) do
+        want[tostring(r)] = true
+    end
+    local keepShiny = _G.Settings["Keep Shiny"] ~= false
+    local protected = buildProtectedAssetSet()
+
+    local data = getPlayerData()
+    local unitData = data and data.UnitData
+    if typeof(unitData) ~= "table" then
+        return 0
     end
 
-    okBulk = pcall(function()
-        Nodes.UNIT_SELL_TABLE:FireServer(idMap)
-    end)
-    if okBulk then
-        print("[AE Kaitun] ส่งขายชุดเดียวแล้ว", #targets, "ตัว (UNIT_SELL_TABLE)")
-        task.wait(1.2)
-        return #targets
-    end
-
-    -- fallback: ทีละตัว ช้าๆ กัน "Please wait..."
-    warn("[AE Kaitun] ขายชุดไม่ได้ — ขายทีละตัว (หน่วง 0.7 วิ)")
-    local sold = 0
-    for _, u in ipairs(targets) do
-        if isInGame() then
-            break
+    local byAsset = {}
+    for id, u in pairs(unitData) do
+        if typeof(u) == "table" and u.Asset then
+            if not (u.Equipped or u.Locked or u.Favorite or protected[u.Asset]) then
+                local rarity = getAssetRarity(u.Asset)
+                if rarity and want[rarity] then
+                    local key = tostring(u.Asset)
+                    byAsset[key] = byAsset[key] or {}
+                    table.insert(byAsset[key], {
+                        ID = id,
+                        Level = tonumber(u.Level) or 1,
+                        Worthiness = tonumber(u.Worthiness) or 0,
+                        Shiny = u.Shiny == true,
+                    })
+                end
+            end
         end
-        local ok = pcall(function()
-            Nodes.UNIT_SELL:FireServer(u.ID)
-        end)
-        if ok then
-            sold += 1
-        end
-        task.wait(0.7)
     end
-    print("[AE Kaitun] ส่งขายแล้ว", sold, "/", #targets, "ตัว")
-    task.wait(0.5)
-    return sold
+
+    local ids = {}
+    for asset, list in pairs(byAsset) do
+        if #list > 1 then
+            -- ตัวดีสุด index 1 (shiny → level → worthiness) → เก็บไว้ ขายที่เหลือ
+            table.sort(list, function(a, b)
+                if a.Shiny ~= b.Shiny then
+                    return a.Shiny
+                end
+                if a.Level ~= b.Level then
+                    return a.Level > b.Level
+                end
+                return a.Worthiness > b.Worthiness
+            end)
+            for i = 2, #list do
+                -- Keep Shiny → เก็บทุกตัว shiny (ไม่ขายแม้ซ้ำ)
+                if not (keepShiny and list[i].Shiny) then
+                    table.insert(ids, list[i].ID)
+                    print(("[AE Kaitun] ขายตัวซ้ำ %s Lv%d%s"):format(
+                        asset, list[i].Level, list[i].Shiny and " ★" or ""
+                    ))
+                end
+            end
+        end
+    end
+
+    if #ids == 0 then
+        return 0
+    end
+    print("[AE Kaitun] ขายตัวซ้ำ", table.concat(rarities or { "Legendary" }, "/"), "=", #ids, "ตัว")
+    return bulkSellUnitIds(ids)
+end
+
+local function sellDuplicateLegendaries()
+    if _G.Settings["Sell Duplicate Legendaries"] == false then
+        return 0
+    end
+    return sellDuplicateUnits(_G.Settings["Dedup Rarities"] or { "Legendary" })
 end
 
 local function autoSellBagUnits()
     if not _G.Settings["Auto Sell Bag"] then
         return 0
     end
-    return sellBagByRarities(_G.Settings["Sell Bag Rarities"])
+    local sold = sellBagByRarities(_G.Settings["Sell Bag Rarities"])
+    -- ขาย Legendary (หรือเรตที่ตั้ง) ที่ซ้ำ Asset ด้วยทุกรอบ ไม่รอกระเป๋าเต็ม
+    sold += sellDuplicateLegendaries()
+    return sold
 end
 
 local function countUnitBag()
@@ -576,9 +680,18 @@ local function ensureBagSpaceBeforeSummon(minFree)
         countUnitBag(), getUnitBagLimit(), free
     ))
     -- บังคับขาย Rare/Epic แม้ Auto Sell ปิด (กันสุ่มไม่ได้ตอนกระเป๋าเต็ม)
-    sellBagByRarities(_G.Settings["Sell Bag Rarities"] or { "Rare", "Epic" })
+    local rarities = _G.Settings["Sell Bag Rarities"] or { "Rare", "Epic" }
+    sellBagByRarities(rarities)
     task.wait(0.8)
-    return getUnitBagLimit() - countUnitBag()
+    free = getUnitBagLimit() - countUnitBag()
+    -- ยังไม่พอ + Keep Shiny กันไว้หมด → last resort: ขาย shiny เรตต่ำ (Rare/Epic) ด้วย
+    if free < minFree and _G.Settings["Keep Shiny"] ~= false then
+        print("[AE Kaitun] กระเป๋ายังเต็ม — ขาย shiny เรตต่ำเป็นทางเลือกสุดท้าย")
+        sellBagByRarities(rarities, { includeShiny = true })
+        task.wait(0.8)
+        free = getUnitBagLimit() - countUnitBag()
+    end
+    return free
 end
 
 -- ช่อง hotbar ที่เปิดแล้ว (ไม่ Disabled / หรือเลเวลผู้เล่นถึงแล้ว)
@@ -761,6 +874,8 @@ Summon.autoSummonAfterCodes = autoSummonAfterCodes
 Summon.getBagUnitsByRarities = getBagUnitsByRarities
 Summon.sellBagByRarities = sellBagByRarities
 Summon.autoSellBagUnits = autoSellBagUnits
+Summon.sellDuplicateUnits = sellDuplicateUnits
+Summon.sellDuplicateLegendaries = sellDuplicateLegendaries
 Summon.countUnitBag = countUnitBag
 Summon.getUnitBagLimit = getUnitBagLimit
 Summon.ensureBagSpaceBeforeSummon = ensureBagSpaceBeforeSummon

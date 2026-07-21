@@ -170,6 +170,7 @@ local function applyUnitSettings()
     unitSettingsApplied = true
 
     local autoUpgrade = _G.Settings["Auto Upgrade"] ~= false
+    local autoAbilities = _G.Settings["Auto Abilities"] ~= false
 
     local opts = {
         -- กราฟิก / ศัตรูเบา
@@ -201,11 +202,11 @@ local function applyUnitSettings()
         StrictPhantomPlacement = false,
         PrioritizePhantomPlacement = false,
         AutoUpgradeOnPlacement = autoUpgrade,
-        AutoAbilitiesOnPlacement = false,
+        AutoAbilitiesOnPlacement = autoAbilities,
         LockFarmsOnPlacement = false,
     }
 
-    print("[AE Kaitun] Units/GFX settings → ยิงช้าๆ | AutoUpgradeOnPlacement =", autoUpgrade)
+    print("[AE Kaitun] Units/GFX settings → ยิงช้าๆ | AutoUpgrade =", autoUpgrade, "| AutoAbilities =", autoAbilities)
     for key, val in pairs(opts) do
         pcall(function()
             Nodes.CLIENT_CHANGE_SETTING:FireServer(key, val)

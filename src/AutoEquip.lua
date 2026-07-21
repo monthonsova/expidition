@@ -174,36 +174,86 @@ local function enumerateNodeNames(force)
     return names
 end
 
--- คืนลิสต์ชื่อ node ที่ match (equip / unequip) เรียงตามความน่าจะเป็น
+-- ชื่อ node ที่น่าจะเป็น equip item (probe ตรงผ่าน __index เผื่อ enumerate ไม่เจอ)
+-- อิงแพทเทิร์นของเกม: ASSET_SELL_TABLE / UNIT_EQUIP → เดา ASSET_EQUIP*/UNIT_EQUIP_ITEM ฯลฯ
+local CANDIDATE_EQUIP_NAMES = {
+    "ASSET_EQUIP_TABLE", "ASSET_EQUIP", "EQUIP_ASSET",
+    "UNIT_EQUIP_ITEM", "UNIT_ITEM_EQUIP", "UNIT_EQUIP_EQUIPMENT",
+    "UNIT_SET_EQUIPMENT", "SET_UNIT_EQUIPMENT", "UNIT_EQUIPMENT_EQUIP",
+    "EQUIP_ITEM", "ITEM_EQUIP", "EQUIP_EQUIPMENT", "EQUIPMENT_EQUIP",
+    "SET_EQUIPMENT", "EQUIPMENT_SET", "APPLY_EQUIPMENT", "ATTACH_EQUIPMENT",
+    "EQUIP_RELIC", "RELIC_EQUIP", "EQUIP_ACCESSORY", "ACCESSORY_EQUIP",
+    "EQUIP_GEAR", "GEAR_EQUIP",
+}
+local CANDIDATE_UNEQUIP_NAMES = {
+    "UNIT_UNEQUIP_ITEM", "UNEQUIP_ITEM", "ITEM_UNEQUIP",
+    "UNEQUIP_EQUIPMENT", "EQUIPMENT_UNEQUIP", "REMOVE_EQUIPMENT",
+    "ASSET_UNEQUIP", "UNEQUIP_ASSET",
+}
+
+-- คืนลิสต์ชื่อ node ที่ match (equip / unequip) เรียงตาม trust score (มาก→น้อย)
 local function scanNodesForEquip()
-    local equipHits, unequipHits = {}, {}
-    for _, name in ipairs(enumerateNodeNames()) do
+    local names = enumerateNodeNames()
+    local enumSet = {}
+    for _, n in ipairs(names) do
+        enumSet[n:upper()] = n
+    end
+
+    local equipScore, unequipScore = {}, {}
+    local function bump(tbl, name, sc)
+        if not name then return end
+        if (tbl[name] or -1) < sc then
+            tbl[name] = sc
+        end
+    end
+
+    -- 1) จาก enumerate: แยก strong (มีคำใบ้ item) / generic (EQUIP เฉยๆ)
+    for _, name in ipairs(names) do
         local up = name:upper()
         if up == "UNIT_EQUIP" or up == "UNIT_UNEQUIP_ALL" or up:find("LOAD_TEAM", 1, true) then
-            -- ยูนิต→hotbar / โหลดทีม ไม่ใช่ equip item
-        elseif up:find("EQUIP", 1, true) and nameMatchesItem(up) and nodeIsFireable(getNodeByName(name)) then
-            if up:find("UNEQUIP", 1, true) then
-                table.insert(unequipHits, name)
+            -- hotbar / โหลดทีม ข้าม
+        elseif up:find("EQUIP", 1, true) and nodeIsFireable(getNodeByName(name)) then
+            local isUnequip = up:find("UNEQUIP", 1, true)
+            local strong = nameMatchesItem(up)
+            local sc = strong and 100 or 50
+            if up:find("EQUIPMENT", 1, true) then sc += 5 end
+            if up:find("ITEM", 1, true) then sc += 4 end
+            if up:find("ASSET", 1, true) then sc += 3 end
+            if isUnequip then
+                bump(unequipScore, name, sc)
             else
-                table.insert(equipHits, name)
+                bump(equipScore, name, sc)
             end
         end
     end
-    -- ให้คะแนน: EQUIPMENT/ITEM มาก่อน แล้ว RELIC/GEAR ฯลฯ
-    local function score(n)
-        local up = n:upper()
-        if up:find("EQUIPMENT", 1, true) then return 5 end
-        if up:find("ITEM", 1, true) then return 4 end
-        if up:find("RELIC", 1, true) or up:find("GEAR", 1, true) then return 3 end
-        if up:find("ACCESSOR", 1, true) then return 2 end
-        return 1
+
+    -- 2) probe ชื่อ candidate ตรงๆ (เผื่อ enumerate ไม่เห็น) — verified ถ้าอยู่ใน enumSet
+    for _, cand in ipairs(CANDIDATE_EQUIP_NAMES) do
+        local real = enumSet[cand] or cand
+        if nodeIsFireable(getNodeByName(real)) then
+            bump(equipScore, real, enumSet[cand] and 90 or 15)
+        end
     end
-    local function sorter(a, b)
-        return score(a) > score(b)
+    for _, cand in ipairs(CANDIDATE_UNEQUIP_NAMES) do
+        local real = enumSet[cand] or cand
+        if nodeIsFireable(getNodeByName(real)) then
+            bump(unequipScore, real, enumSet[cand] and 90 or 15)
+        end
     end
-    table.sort(equipHits, sorter)
-    table.sort(unequipHits, sorter)
-    return equipHits, unequipHits
+
+    -- verified = ชื่อโผล่ใน enumerate จริง (remote instance/proxy) → ปลอดภัยที่จะยิง
+    -- unverified = ได้จาก probe ชื่อเดาล้วนๆ (score < 20) → แค่ suggestion ห้ามยิงอัตโนมัติ
+    local function toSortedList(scoreMap)
+        local out = {}
+        for name in pairs(scoreMap) do
+            table.insert(out, { name = name, score = scoreMap[name], verified = scoreMap[name] >= 20 })
+        end
+        table.sort(out, function(a, b)
+            return a.score > b.score
+        end)
+        return out
+    end
+    return toSortedList(equipScore), toSortedList(unequipScore)
 end
 
 local discoverCache = nil
@@ -214,20 +264,36 @@ local function discover(cfg, force)
     end
     local container, containerKey = findContainer(cfg)
 
+    local equipHits, unequipHits = scanNodesForEquip()
+
+    -- เลือก node ที่จะยิงจริง: override ก่อน → candidate ที่ verified ตัวแรก (ห้ามยิง unverified อัตโนมัติ)
+    local function pickVerified(hits)
+        for _, h in ipairs(hits) do
+            if h.verified then
+                return h.name
+            end
+        end
+        return nil
+    end
+
     local equipNode, equipNodeName
     if cfg.EquipNode and nodeIsFireable(getNodeByName(cfg.EquipNode)) then
         equipNode, equipNodeName = getNodeByName(cfg.EquipNode), cfg.EquipNode
-    end
-    local equipHits, unequipHits = scanNodesForEquip()
-    if not equipNode and equipHits[1] then
-        equipNode, equipNodeName = getNodeByName(equipHits[1]), equipHits[1]
+    else
+        local pick = pickVerified(equipHits)
+        if pick then
+            equipNode, equipNodeName = getNodeByName(pick), pick
+        end
     end
 
     local unequipNode, unequipNodeName
     if cfg.UnequipNode and nodeIsFireable(getNodeByName(cfg.UnequipNode)) then
         unequipNode, unequipNodeName = getNodeByName(cfg.UnequipNode), cfg.UnequipNode
-    elseif unequipHits[1] then
-        unequipNode, unequipNodeName = getNodeByName(unequipHits[1]), unequipHits[1]
+    else
+        local pick = pickVerified(unequipHits)
+        if pick then
+            unequipNode, unequipNodeName = getNodeByName(pick), pick
+        end
     end
 
     discoverCache = {
@@ -291,17 +357,7 @@ local function getEquipmentItems(container, cfg)
 end
 
 -- ยูนิตในทีม (หรือทั้งกระเป๋า) → เรียง แข็งสุดก่อน
-local function getTargetUnits(cfg)
-    local data = getPlayerData()
-    local unitData = data and data.UnitData
-    if typeof(unitData) ~= "table" then
-        return {}
-    end
-    local filterSet = nil
-    if cfg.OnlyEquippedUnits then
-        local Team = getTeamModule()
-        filterSet = Team.getEquippedUnitIdSet and Team.getEquippedUnitIdSet() or {}
-    end
+local function rankUnitList(unitData, filterSet)
     local list = {}
     for id, u in pairs(unitData) do
         if typeof(u) == "table" and u.Asset then
@@ -323,12 +379,35 @@ local function getTargetUnits(cfg)
         if a.Rank ~= b.Rank then
             return a.Rank > b.Rank
         end
+        -- shiny แข็งกว่าในเรตเดียวกัน → ควรได้ item ก่อน
+        if a.Shiny ~= b.Shiny then
+            return a.Shiny
+        end
         if a.Level ~= b.Level then
             return a.Level > b.Level
         end
         return a.Worthiness > b.Worthiness
     end)
     return list
+end
+
+local function getTargetUnits(cfg)
+    local data = getPlayerData()
+    local unitData = data and data.UnitData
+    if typeof(unitData) ~= "table" then
+        return {}
+    end
+    if cfg.OnlyEquippedUnits then
+        local Team = getTeamModule()
+        local filterSet = (Team and Team.getEquippedUnitIdSet and Team.getEquippedUnitIdSet()) or {}
+        local list = rankUnitList(unitData, filterSet)
+        if #list > 0 then
+            return list
+        end
+        -- ทีมยังไม่ถูกใส่ (เช่นตอน startup) → fallback ใช้ยูนิตแข็งสุดในกระเป๋าแทน
+        print("[AE Kaitun] AutoEquip: ยังไม่มียูนิตในทีม — fallback ใช้ยูนิตแข็งสุดในกระเป๋า")
+    end
+    return rankUnitList(unitData, nil)
 end
 
 ------------------------------------------------------------------------
@@ -385,8 +464,13 @@ local function autoEquipBestItems(reason)
             return false
         end
         if not disc.equipNode then
-            print("[AE Kaitun] AutoEquip: ไม่พบ node สำหรับ equip item —",
-                "ตั้ง Auto Equip.EquipNode หรือรัน AEKaitun.DumpEquip() ดูชื่อ node จริง")
+            local sugg = {}
+            for _, h in ipairs(disc.equipCandidates or {}) do
+                table.insert(sugg, h.name .. (h.verified and "" or "(?)"))
+            end
+            warn("[AE Kaitun] AutoEquip: หา node equip item (verified) ไม่เจอ —",
+                "รัน AEKaitun.DumpEquip() แล้วตั้ง Auto Equip.EquipNode + ArgOrder เอง.",
+                #sugg > 0 and ("candidate: " .. table.concat(sugg, ", ")) or "ไม่มี candidate เลย")
             return false
         end
 
@@ -459,8 +543,15 @@ local function dump()
     print("PlayerData equipment container key =", tostring(disc.containerKey))
     print("equip node (เลือกใช้) =", tostring(disc.equipNodeName))
     print("unequip node (เลือกใช้) =", tostring(disc.unequipNodeName))
-    print("equip candidates =", table.concat(disc.equipCandidates or {}, ", "))
-    print("unequip candidates =", table.concat(disc.unequipCandidates or {}, ", "))
+    local function fmtCands(hits)
+        local s = {}
+        for _, h in ipairs(hits or {}) do
+            table.insert(s, ("%s[score=%d%s]"):format(h.name, h.score or 0, h.verified and ",verified" or ",UNVERIFIED"))
+        end
+        return #s > 0 and table.concat(s, ", ") or "(none)"
+    end
+    print("equip candidates =", fmtCands(disc.equipCandidates))
+    print("unequip candidates =", fmtCands(disc.unequipCandidates))
 
     -- ลิสต์คีย์ทั้งหมดใน PlayerData (หา container ที่ auto-discover พลาด)
     local data = peek(Dependencies.PlayerData)

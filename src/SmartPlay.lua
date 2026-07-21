@@ -126,46 +126,9 @@ local function ensureBagSpace(cfg)
 	task.wait(0.8)
 	free = getBagFreeSlots()
 
-	-- ยังแน่น → ขาย Legendary ซ้ำ Asset (เก็บเลเวลสูงสุดไว้)
+	-- ยังแน่น → ขายตัวซ้ำ Asset (Legendary) ด้วย (ใช้ตัวเดียวกับ auto-sell)
 	if free < need and cfg.SellDuplicateLegendaries then
-		local data = getPlayerData()
-		local unitData = data and data.UnitData
-		local byAsset = {}
-		if typeof(unitData) == "table" then
-			for id, u in pairs(unitData) do
-				if typeof(u) == "table" and u.Asset and not u.Equipped and not u.Locked and not u.Favorite then
-					if Summon.getAssetRarity(u.Asset) == "Legendary" then
-						local key = tostring(u.Asset)
-						byAsset[key] = byAsset[key] or {}
-						table.insert(byAsset[key], {
-							ID = id,
-							Level = tonumber(u.Level) or 1,
-						})
-					end
-				end
-			end
-		end
-		local idMap = {}
-		local nDup = 0
-		for _, list in pairs(byAsset) do
-			if #list > 1 then
-				table.sort(list, function(a, b)
-					return a.Level > b.Level
-				end)
-				for i = 2, #list do
-					idMap[list[i].ID] = true
-					nDup += 1
-				end
-			end
-		end
-		if nDup > 0 then
-			print("[AE Kaitun] SmartPlay ขาย Legendary ซ้ำ", nDup, "ตัว")
-			pcall(function()
-				Nodes.ASSET_SELL_TABLE:FireServer("Unit", idMap)
-			end)
-			task.wait(1.0)
-			sold += nDup
-		end
+		sold += Summon.sellDuplicateLegendaries()
 	end
 
 	print(("[AE Kaitun] SmartPlay หลังขาย free=%d"):format(getBagFreeSlots()))

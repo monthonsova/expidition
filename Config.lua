@@ -39,6 +39,12 @@ local defaultSettings = {
     -- ขายยูนิตในกระเป๋า (lobby) ตาม Rarity
     ["Auto Sell Bag"] = true,
     ["Sell Bag Rarities"] = { "Rare", "Epic" },
+    -- ห้ามขายตัว shiny (แม้อยู่ใน Sell Bag Rarities) — shiny หายาก/สตัทดีกว่า เก็บไว้ก่อน
+    -- true = กันขาย shiny ทุกตัว | false = ขาย shiny ตาม Sell Bag Rarities ปกติ
+    ["Keep Shiny"] = true,
+    -- ขายยูนิตซ้ำ Asset ที่ไม่ได้ใช้ (เก็บตัวดีสุด: shiny→level→worthiness) ทุกรอบ auto-sell
+    ["Sell Duplicate Legendaries"] = true,
+    ["Dedup Rarities"] = { "Legendary" }, -- เรตที่จะเก็บแค่ตัวเดียวต่อ Asset (Mythic+ ไม่แตะ)
 
     -- ทีม
     ["Use Load Team"] = false,
@@ -56,15 +62,17 @@ local defaultSettings = {
         FillWithLegendary = true, -- ช่องเหลือเติม Legendary คนละตัว
         ReplaceWeakUnits = true, -- มี Mythic แล้วถอดตัวอ่อนในลิสต์ Units ออก
         PreferShiny = true,
+        PreferHighDPS = true, -- ใช้ DPS จริง (damage/spa) จัดอันดับในเรตเดียวกัน — ฉลาดเลือกจาก stats
         PreferHighWorthiness = true,
     },
-    -- ทีม Secret: Secret/Exclusive ได้จาก evolution เท่านั้น (ไม่มีในแบนเนอร์)
+    -- ทีม Secret: Secret/Exclusive ได้จาก summon (ถ้ามีในพูล) หรือ evolution
     ["Smart Secret Team"] = {
         Enabled = true,
         FillWithMythic = true,    -- Secret ไม่พอ → เติม Mythic
         FillWithLegendary = true, -- แล้วค่อย Legendary
         ReplaceWeakUnits = true,
         PreferShiny = true,
+        PreferHighDPS = true,
         PreferHighWorthiness = true,
     },
     -- SmartPlay จะ evolve Mythic → Secret/Exclusive ให้ ถ้าวัตถุดิบครบ
@@ -187,6 +195,8 @@ local defaultSettings = {
     ["Min Combat Before Farm"] = 2,
     ["Auto Skip Waves"] = true,
     ["Auto Upgrade"] = true,
+    -- ยูนิตร่ายสกิล/อัลติอัตโนมัติ = burst damage หลักที่ใช้ตีบอส (ปิดไว้ = ตีบอสไม่ไหว)
+    ["Auto Abilities"] = true,
 
     -- Smart Placement: วางแบบดูระยะยิง + วางตัว DPS สูงสุดก่อน
     ["Smart Placement"] = {

@@ -7,6 +7,7 @@ local AutoFarmManager = _G.AEKaitun_Loader and _G.AEKaitun_Loader.require("src/A
 local Lobby = _G.AEKaitun_Loader and _G.AEKaitun_Loader.require("src/Lobby.lua") or loadstring(readfile("expidition/src/Lobby.lua"))()
 local InGame = _G.AEKaitun_Loader and _G.AEKaitun_Loader.require("src/InGame.lua") or loadstring(readfile("expidition/src/InGame.lua"))()
 local SmartPlay = _G.AEKaitun_Loader and _G.AEKaitun_Loader.require("src/SmartPlay.lua") or loadstring(readfile("expidition/src/SmartPlay.lua"))()
+local Summon = _G.AEKaitun_Loader and _G.AEKaitun_Loader.require("src/Summon.lua") or loadstring(readfile("expidition/src/Summon.lua"))()
 
 local isInGame = Replicas.isInGame
 local getAccountLevel = Replicas.getAccountLevel
@@ -196,6 +197,12 @@ local function runStoryFarmLoop()
             -- Soft-reset / แพ้ติด → SmartPlay ก่อนคิวใหม่
             pcall(function()
                 SmartPlay.consumeIfNeeded("lobby-return")
+            end)
+            -- เก็บกวาดตัวซ้ำ (Legendary) ที่ได้จากรางวัลระหว่างฟาร์ม — บาง/ยิงเฉพาะเมื่อมีจริง
+            pcall(function()
+                if _G.Settings["Auto Sell Bag"] then
+                    Summon.sellDuplicateLegendaries()
+                end
             end)
             if not consumeFarmMatchReturn() then
                 print("[AE Kaitun] Farm All Story เสร็จแล้ว")
