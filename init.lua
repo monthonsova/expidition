@@ -1,8 +1,4 @@
-<<<<<<< HEAD
 -- AE Kaitun — Anime Expeditions Modular Loader
-=======
--- AE Kaitun - Anime Expeditions Modular Loader
->>>>>>> f7875d3661c03c148688ef24d741a13f568c24be
 -- PlaceId: 84515722934860
 
 -- ------------------------------------------------------------------------

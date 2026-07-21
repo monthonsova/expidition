@@ -1,8 +1,4 @@
-<<<<<<< HEAD
 -- AE Kaitun — Anime Expeditions Configuration
-=======
--- AE Kaitun - Anime Expeditions Configuration
->>>>>>> f7875d3661c03c148688ef24d741a13f568c24be
 
 if not _G.Settings then
     _G.Settings = {}

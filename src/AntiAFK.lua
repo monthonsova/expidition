@@ -1,8 +1,4 @@
-<<<<<<< HEAD
 -- AE Kaitun — Anti-AFK, Auto-Rejoin & Duplicate Execution Guard
-=======
--- AE Kaitun - Anti-AFK, Auto-Rejoin & Duplicate Execution Guard
->>>>>>> f7875d3661c03c148688ef24d741a13f568c24be
 
 local AntiAFK = {}
 
