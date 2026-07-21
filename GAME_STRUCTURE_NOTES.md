@@ -116,6 +116,22 @@ ReplicatedStorage
 3. ตรวจสอบ remote/field name ที่ใช้อยู่ทั้งหมดเทียบกับซอร์สจริง (Nodes.*, Dependencies.*, Actions.*, CollectionService tags) — **ตรงกันทั้งหมด ไม่มีชื่อผิด**
 4. ยืนยัน MaxSlots สูงสุด = 6 → ไม่ต้องแก้ loop hardcode
 
+## 6b. อัปเดตรอบตรวจซ้ำ — เจอ `Shared` ชื่อซ้อนกัน 2 ตัว (บั๊กจริง แก้แล้ว)
+
+ยืนยันจาก decompile ว่าในเกมมีตัวแปรชื่อ `Shared` อยู่ **2 ตัวคนละที่คนละหน้าที่**:
+
+1. `ReplicatedStorage.Shared` — **Folder** ใช้ตรงๆ ไม่ต้อง require ตัวมันเอง (มีลูกให้ require รายตัว: `Utils`, `Information`, `UnitUtils`, `ReplicaClient`, `Maid`) — นี่คือตัวที่ `Core.Shared` ชี้ไปถูกแล้ว
+2. `require(FusionPackage.Shared)` — **ModuleScript** คืนตาราง Fusion state ของทั้งเกม มี field เช่น `IsInGame = IsFilled(Dependencies.GameState)`, `IsGameActive = KeyOf(Dependencies.GameState, "Active")`, `IsInParty = IsValid(Dependencies.PartyData)`, `SelectedHotbarIndex = GetState("SelectedHotbarIndex")`
+
+**บั๊กที่เจอ:** โค้ดเดิมใช้ `Shared.IsInGame` / `Shared.IsGameActive` / `Shared.SelectedHotbarIndex` โดยอ้างถึง `Core.Shared` (ตัวที่ 1 — Folder) ซึ่ง**ไม่มี field เหล่านี้เลย** ต้องเป็นตัวที่ 2 (โมดูล FusionPackage.Shared) — อาการ: `isInGame()` จะพังทุกครั้งที่เรียก (index nil/error) และการวางยูนิตอัตโนมัติจะ error แฝงตอนพยายามเคลียร์ ghost-placement selection
+
+**แก้แล้ว** (ไม่ต้อง require โมดูลที่สองเพิ่มเลย เพราะทั้ง 2 field แปลงกลับมาอ่านจาก `Dependencies` ตรงๆ ได้):
+- `Replicas.lua: isInGame()` → เช็ค `peek(Dependencies.GameState) ~= nil` ตรงๆ (เทียบเท่า `IsFilled`)
+- `InGame.lua: isGameActive()` → อ่าน `peek(Dependencies.GameState).Active` ตรงๆ (เทียบเท่า `KeyOf(GameState, "Active")`)
+- `InGame.lua: clearHotbarSelection()` → ใช้ `Dependencies.scope:GetState("SelectedHotbarIndex"):set(nil)` (named-state ของ Fusion "State" extension เรียกจาก scope ไหนก็ได้ค่าเดียวกัน ยืนยันจาก UI หลายที่ในเกมเรียกชื่อนี้แล้วได้ตัวเดียวกัน)
+
+**บั๊กเดียวกันอีกจุด:** `Rewards.lua: getAchievementCategories()` เดิมพยายาม `Shared.Information.Quests:GetChildren()` — ผิดทั้ง path (`Shared` โฟลเดอร์ไม่มี `.Quests`) และ `Information` ต้อง `require()` ก่อนด้วย → แก้เป็นคืนลิสต์ชื่อ 5 หมวดตรงๆ (ยืนยันแล้วว่าตรงกับ ModuleScript จริงในเกมทั้ง 5 ชื่อ: `Achievement_Collector/Story/Raid/Secret/Expeditions`) ตัดการสแกน children ที่เสี่ยงพังออก
+
 ## 7. จุดที่ยังเป็นข้อสังเกต (ความเสี่ยงต่ำ ไม่ได้แก้เพราะมี fallback ครอบอยู่แล้ว)
 
 - `StarterUnit.lua` ยิง `CHOOSE_STARTER_UNIT:FireServer(asset)` ตรงๆ โดยไม่รอ `Nodes.PROMPT_CHOOSE_STARTER_UNIT:Connect` ก่อน (เกมจริงยิง prompt นี้ให้ UI แสดงตัวเลือกก่อน) — ถ้าเซิร์ฟเวอร์เช็คแค่ "ผู้เล่นยังไม่มียูนิต" ก็ยิงตรงได้ปกติ (ตามที่ออกแบบไว้เดิม) แต่ถ้าเซิร์ฟเวอร์บังคับต้องมี prompt state ก่อนอาจถูกเซิร์ฟเวอร์เมิน — ให้สังเกตว่าไอดีใหม่ได้ยูนิตจริงไหมหลังรันสคริปต์ ถ้าไม่ได้ให้แจ้งกลับมาแก้เพิ่ม (ต่อ `Nodes.PROMPT_CHOOSE_STARTER_UNIT:Connect` ก่อนยิง)

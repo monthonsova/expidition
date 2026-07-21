@@ -13,7 +13,6 @@ local AutoFarmManager = _G.AEKaitun_Loader and _G.AEKaitun_Loader.require("src/A
 local Services = Core.Services
 local LocalPlayer = Core.LocalPlayer
 local Nodes = Core.Nodes
-local Shared = Core.Shared
 local Dependencies = Core.Dependencies
 local peek = Core.peek
 local ReplicaClient = Core.ReplicaClient
@@ -271,13 +270,37 @@ local function setupAutoVoteStart()
     end)
 end
 
+-- Shared.IsGameActive จริงคือ FusionPackage.Shared (คนละตัวกับ ReplicatedStorage.Shared folder ที่เราใช้)
+-- นิยาม = KeyOf(Dependencies.GameState, "Active") → อ่าน field ตรงจาก GameState เองได้เลย ไม่ต้อง require โมดูลเพิ่ม
+local function isGameActive()
+    local ok, gs = pcall(peek, Dependencies.GameState)
+    if ok and typeof(gs) == "table" then
+        return gs.Active == true
+    end
+    return false
+end
+
+-- SelectedHotbarIndex จริงคือ named-state จาก Fusion "State" extension (v4:GetState("SelectedHotbarIndex"))
+-- ตัวเดียวกันทุกที่ที่เรียกชื่อนี้ (คีย์ตามชื่อ ไม่ผูกกับ scope ที่สร้าง) — ใช้ Dependencies.scope เรียกได้เลย
+local function clearHotbarSelection()
+    pcall(function()
+        local scope = Dependencies.scope
+        if scope and typeof(scope.GetState) == "function" then
+            local state = scope:GetState("SelectedHotbarIndex")
+            if state and typeof(state.set) == "function" then
+                state:set(nil)
+            end
+        end
+    end)
+end
+
 local function waitForPlacementReady(timeout)
     timeout = timeout or 45
     local t0 = os.clock()
     while os.clock() - t0 < timeout do
         local hotbar = peek(Dependencies.HotbarState)
         local allowed = hotbar and hotbar.PlacementAllowed
-        local active = peek(Shared.IsGameActive)
+        local active = isGameActive()
         local rep = getGamePlayerReplica()
         if rep and (allowed == true or active == true) then
             return true
@@ -301,9 +324,7 @@ local function autoPlaceUnits()
     task.wait(0.2)
 
     -- ปิด ghost placement ของ UI กันกด Place แล้วขึ้น "cannot place"
-    pcall(function()
-        Shared.SelectedHotbarIndex:set(nil)
-    end)
+    clearHotbarSelection()
 
     local delaySec = math.clamp(tonumber(_G.Settings["Place Delay"]) or 0.85, 0.75, 2.5)
     local maxPerSlot = tonumber(_G.Settings["Max Place Per Slot"]) or 4
@@ -413,9 +434,7 @@ local function autoPlaceUnits()
                 pointCache = {}
             end
 
-            pcall(function()
-                Shared.SelectedHotbarIndex:set(nil)
-            end)
+            clearHotbarSelection()
 
             local slots = getAffordableSlotsOrdered()
             local owned = countOwnPlacedUnits()

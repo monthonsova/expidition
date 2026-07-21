@@ -9,34 +9,24 @@ local Replicas = _G.AEKaitun_Loader and _G.AEKaitun_Loader.require("src/Replicas
 
 local Nodes = Core.Nodes
 local Dependencies = Core.Dependencies
-local Shared = Core.Shared
 local Actions = Core.Actions
 local peek = Core.peek
 
 local isInGame = Replicas.isInGame
 local getPlayerData = Replicas.getPlayerData
 
+-- รายชื่อยืนยันตรงกับ ModuleScript จริงในเกม (Achievement_Collector/Story/Raid/Secret/Expeditions)
+-- เดิมพยายามสแกน children แบบไดนามิกจาก Shared.Information.Quests แต่ path นั้นชี้ผิด (Shared คือโฟลเดอร์
+-- ReplicatedStorage.Shared ไม่ใช่ FusionPackage.Shared ที่มี state จริง) และ Information ต้อง require() ก่อนใช้
+-- อยู่แล้ว — ใช้ลิสต์ที่ยืนยันแล้วตรงๆ ชัดเจนกว่าและไม่มีจุดพัง
 local function getAchievementCategories()
-    local list = {
+    return {
         "Achievement_Collector",
         "Achievement_Story",
         "Achievement_Raid",
         "Achievement_Secret",
         "Achievement_Expeditions",
     }
-    pcall(function()
-        local folder = Shared.Information.Quests
-        local found = {}
-        for _, child in ipairs(folder:GetChildren()) do
-            if child:IsA("ModuleScript") and string.find(child.Name, "Achievement_", 1, true) == 1 then
-                table.insert(found, child.Name)
-            end
-        end
-        if #found > 0 then
-            list = found
-        end
-    end)
-    return list
 end
 
 local function claimAllRewards()

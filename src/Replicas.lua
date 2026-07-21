@@ -11,8 +11,15 @@ local Shared = Core.Shared
 local peek = Core.peek
 local waitPeek = Core.waitPeek
 
+-- เกมจริง (FusionPackage.Shared module — คนละตัวกับ ReplicatedStorage.Shared folder ที่เราใช้)
+-- นิยาม IsInGame = IsFilled(Dependencies.GameState) คือเช็คว่า GameState ถูก set (ไม่ใช่ nil) หรือยัง
+-- อ่านตรงจาก Dependencies.GameState เลย ไม่ต้อง require โมดูล Shared ตัวที่สองเพิ่ม
 local function isInGame()
-    return peek(Shared.IsInGame) == true
+    local ok, gs = pcall(peek, Dependencies.GameState)
+    if ok and gs ~= nil then
+        return true
+    end
+    return false
 end
 
 local function getPlayerData()
