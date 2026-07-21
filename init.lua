@@ -4,6 +4,34 @@
 ]]
 
 -- ------------------------------------------------------------------------
+-- Game Validation Protection (Wrong Game Guard)
+-- ------------------------------------------------------------------------
+local ANIME_EXPEDITIONS_LOBBY_ID = 84515722934860
+
+local function isAnimeExpeditionsGame()
+    if game.PlaceId == ANIME_EXPEDITIONS_LOBBY_ID then
+        return true
+    end
+    local replicatedStorage = game:GetService("ReplicatedStorage")
+    if replicatedStorage:FindFirstChild("Nodes") and replicatedStorage:FindFirstChild("Replica") then
+        return true
+    end
+    return false
+end
+
+if not isAnimeExpeditionsGame() then
+    warn("[AE Kaitun Error] This script is ONLY for Anime Expeditions! (Current PlaceId: " .. tostring(game.PlaceId) .. ")")
+    pcall(function()
+        game:GetService("StarterGui"):SetCore("SendNotification", {
+            Title = "AE Kaitun Error",
+            Text = "สคริปต์นี้ใช้ได้เฉพาะเกม Anime Expeditions เท่านั้น!",
+            Duration = 10,
+        })
+    end)
+    return
+end
+
+-- ------------------------------------------------------------------------
 -- Duplicate Execution Protection (Anti-Double Execution)
 -- ------------------------------------------------------------------------
 if getgenv()._AEKaitunLoaded then
