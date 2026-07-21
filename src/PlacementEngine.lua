@@ -806,6 +806,61 @@ local function getEnemyPositions()
     return list
 end
 
+-- โมเดลศัตรูจริง (Instance) สำหรับ GET_ENEMY_INFOS
+local function getEnemyModels()
+    local list = {}
+    pcall(function()
+        local enemies = peek(Dependencies.GameEnemies) or {}
+        for model in pairs(enemies) do
+            if typeof(model) == "Instance" then
+                table.insert(list, model)
+            end
+        end
+    end)
+    if #list == 0 then
+        local folder = Workspace:FindFirstChild("Enemies")
+        if folder then
+            for _, m in ipairs(folder:GetChildren()) do
+                if m:IsA("Model") or m:IsA("BasePart") then
+                    table.insert(list, m)
+                end
+            end
+        end
+    end
+    return list
+end
+
+-- มีบอสในสนามตอนนี้มั้ย — enemy Info.Type มีคำว่า "Boss" (ยืนยันจาก decompile v1.Boss/getTargets)
+-- fallback: ชื่อโมเดลมี "Boss"
+local function isBossPresent()
+    local models = getEnemyModels()
+    if #models == 0 then
+        return false
+    end
+    local found = false
+    pcall(function()
+        local infos = Nodes.GET_ENEMY_INFOS:InvokeSelf(models)
+        if typeof(infos) == "table" then
+            for _, info in pairs(infos) do
+                local t = typeof(info) == "table" and info.Type
+                if typeof(t) == "string" and string.find(t, "Boss") then
+                    found = true
+                    return
+                end
+            end
+        end
+    end)
+    if not found then
+        for _, m in ipairs(models) do
+            if typeof(m) == "Instance" and string.find(m.Name, "Boss") then
+                found = true
+                break
+            end
+        end
+    end
+    return found
+end
+
 local function distFlat(a, b)
     local dx, dz = a.X - b.X, a.Z - b.Z
     return math.sqrt(dx * dx + dz * dz)
@@ -858,11 +913,14 @@ local function getFrontmostEnemy(enemies, pathEnds)
     return threat[1]
 end
 
--- strategy: วางเฉพาะบริเวณมอนที่เดินนำหน้าไกลสุด (frontmost) — คะแนน = ระยะถึงมอนนำหน้า (ยิ่งใกล้ยิ่งดี)
+-- strategy: วางตามจุดที่ศัตรูเดินผ่าน (ชิดเส้นทางที่มอนเดิน) — คะแนน = ระยะถึง path ที่ใกล้สุด (ยิ่งชิดยิ่งดี)
+-- ไม่เจาะจงมอนใกล้ฐาน (เลิกวางดักหน้าฐาน) — targeting เป็นตัวเลือกเป้าเอง (Boss/Closest)
 local function scorePlacePosition(pos, enemies, pathPoints, pathEnds)
-    local front = getFrontmostEnemy(enemies, pathEnds)
-    if front then
-        return distFlat(pos, front)
+    if typeof(pathPoints) == "table" and #pathPoints > 0 then
+        return distToNearestPath(pos, pathPoints)
+    end
+    if typeof(enemies) == "table" and #enemies > 0 then
+        return minDistToPoints(pos, enemies)
     end
     return math.huge
 end
@@ -965,27 +1023,40 @@ local function snapToPlaceableGround(worldPos, asset)
     return nil
 end
 
--- strategy: สร้างจุดวาง "เฉพาะบริเวณมอนที่เดินนำหน้าไกลสุด (frontmost)" เท่านั้น
+-- strategy: สร้างจุดวาง "ตามจุดที่ศัตรูเดินผ่าน" — หว่าน seed รอบมอนทุกตัวที่อยู่ในสนาม
+-- แล้วเลือกจุดที่ชิดเส้นทาง (path) ที่สุด → unit ยืนข้างเลนที่มอนเดินผ่าน (ไม่วางดักหน้าฐาน)
 -- ไม่มีมอน → คืน {} (ไม่วาง จนกว่ามอนจะออกมา)
+local ENEMY_ANCHOR_CAP = 8
 local function buildAAStylePlaceCFrames(asset, count)
     count = math.clamp(count or 8, 1, 14)
     local pathPoints = getPathPoints()
-    local pathEnds = getPathEndPositions(pathPoints)
     local enemies = getEnemyPositions()
-    local front = getFrontmostEnemy(enemies, pathEnds)
-    if not front then
+    if #enemies == 0 then
         return {}
     end
     local size = getUnitBoxSize(asset)
     local halfY = size.Y / 2
 
-    -- หว่าน seed รอบมอนนำหน้าไกลสุดเท่านั้น (ใกล้ก่อน แล้วขยายวงถ้าจุดไม่พอ)
-    local seeds = {}
-    for _, off in ipairs(ENEMY_OFFSETS_NEAR) do
-        table.insert(seeds, front + off)
+    -- เลือก anchor = ตำแหน่งมอน (จำกัดจำนวนกันคำนวณเยอะ) — กระจายรอบมอนที่กำลังเดิน
+    local anchors = {}
+    for i = 1, math.min(#enemies, ENEMY_ANCHOR_CAP) do
+        table.insert(anchors, enemies[i])
     end
-    for _, off in ipairs(ENEMY_OFFSETS_FAR) do
-        table.insert(seeds, front + off)
+
+    -- หว่าน seed รอบแต่ละ anchor
+    local seeds = {}
+    for _, anchor in ipairs(anchors) do
+        for _, off in ipairs(ENEMY_OFFSETS_NEAR) do
+            table.insert(seeds, anchor + off)
+        end
+    end
+    -- มอนน้อย → ขยายวงด้วย FAR offset กันจุดไม่พอ
+    if #anchors <= 2 then
+        for _, anchor in ipairs(anchors) do
+            for _, off in ipairs(ENEMY_OFFSETS_FAR) do
+                table.insert(seeds, anchor + off)
+            end
+        end
     end
 
     local candidates = {}
@@ -1001,10 +1072,10 @@ local function buildAAStylePlaceCFrames(asset, count)
             snapOk += 1
             local cf = makePlaceCFrame(ground, halfY)
             if canPlaceAt(asset, cf) then
-                table.insert(candidates, {
-                    cf = cf,
-                    score = distFlat(ground, front), -- ยิ่งใกล้มอนนำหน้ายิ่งดี
-                })
+                -- ยิ่งชิดเส้นทางที่มอนเดินยิ่งดี (อยู่ในระยะโจมตีเลนที่มอนผ่าน)
+                local score = (#pathPoints > 0) and distToNearestPath(ground, pathPoints)
+                    or minDistToPoints(ground, enemies)
+                table.insert(candidates, { cf = cf, score = score })
             end
         end
     end
@@ -1037,10 +1108,8 @@ local function buildAAStylePlaceCFrames(asset, count)
     local now = os.clock()
     if (getgenv()[key] or 0) + 6 < now then
         getgenv()[key] = now
-        local frontToBase = (#pathEnds > 0) and minDistToPoints(front, pathEnds) or -1
         print("[AE Kaitun] points hard=", #hard, "| snap=", snapOk, "| seeds=", #seeds,
-            "| enemies=", #enemies,
-            "| front→base~=", typeof(frontToBase) == "number" and string.format("%.1f", frontToBase) or frontToBase)
+            "| enemies=", #enemies, "| anchors=", #anchors, "(วางตามจุดที่มอนเดิน)")
     end
 
     return hard
@@ -1205,6 +1274,8 @@ PlacementEngine.getPlaceableParts = getPlaceableParts
 PlacementEngine.getPathPoints = getPathPoints
 PlacementEngine.getPathEndPositions = getPathEndPositions
 PlacementEngine.getEnemyPositions = getEnemyPositions
+PlacementEngine.getEnemyModels = getEnemyModels
+PlacementEngine.isBossPresent = isBossPresent
 PlacementEngine.getThreatEnemies = getThreatEnemies
 PlacementEngine.getFrontmostEnemy = getFrontmostEnemy
 PlacementEngine.minDistToPoints = minDistToPoints

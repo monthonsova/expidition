@@ -210,6 +210,13 @@ local defaultSettings = {
     -- ยูนิตร่ายสกิล/อัลติอัตโนมัติ = burst damage หลักที่ใช้ตีบอส (ปิดไว้ = ตีบอสไม่ไหว)
     ["Auto Abilities"] = true,
 
+    -- Smart Targeting: ทุก unit เลือกเป้า Boss ถ้ามีบอสในสนาม ไม่งั้น Closest
+    -- ยิงผ่าน ChangeGameUnitPriority (decompile ยืนยัน) — บอส = enemy Info.Type มี "Boss"
+    ["Smart Targeting"] = true,
+    ["Targeting Boss Priority"] = "Boss",       -- เมื่อมีบอส
+    ["Targeting Default Priority"] = "Closest",  -- เมื่อไม่มีบอส
+    ["Targeting Interval"] = 1.5,                -- วินาที ต่อการเช็ค/อัปเดตเป้า
+
     -- Feed เชิงรุก: level ยูนิตในทีมที่ยังต่ำ (เช่น carry Mythic Lvl 1) ทุกรอบกลับ lobby
     -- ไม่ต้องรอแพ้ติด — permanent level ต่ำ = base stat ต่ำ = ตีบอสไม่ออก
     ["Auto Feed Team"] = true,

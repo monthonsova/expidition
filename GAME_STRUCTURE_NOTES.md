@@ -232,21 +232,22 @@ Lv1 SchoolGrounds → Lv15 FlowerForest → Lv30 Dressrosa → Lv45 FairyKingFor
 1. rank equipment ในกระเป๋า (rarity → level/enhance → worthiness) ดีสุดก่อน
 2. rank ยูนิตในทีม (rarity → level → worthiness) แข็งสุดก่อน
 3. จ่าย item ดีสุด `ItemsPerUnit` ชิ้น/ยูนิต ไล่จากยูนิตแข็งสุด → ครบทั้งทีม (item ที่ติดถูกตัวอยู่แล้ว = ข้าม)
-4. ยิง `equipNode:FireServer(...)` ตาม `ArgOrder` (`unit_item` default | `item_unit` | `unit_item_slot`)
+4. ยิงผ่าน `Actions.EquipEquipment(...)` (หลัก) / fallback `Nodes.EQUIPMENT_EQUIP:FireServer(...)` ตาม `ArgOrder`
+
+### API จริง (ยืนยันจาก decompile `expidition_lobby.rbxlx`)
+- **equip**: `Actions.EquipEquipment(equipmentId, unitId, slotIndex)` → `Nodes.EQUIPMENT_EQUIP:FireServer(equipmentId, unitId, slotIndex)` (บรรทัด 437587, 1791706)
+- **container**: `PlayerData.EquipmentData` — entry `{ Asset="Kunai", Stats={...}, ... }` keyed by equipmentId
+- **ยูนิตอ้าง equipment**: `UnitData[unitId].Equipment = { ["1"] = equipmentId }` → `buildEquippedMap()` map equipmentId→unitId (ใช้เช็ค "ติดตัวไหนอยู่")
+- **ArgOrder default = `item_unit_slot`** = `(equipmentId, unitId, slotIndex)` ← ลำดับจริง (เดิมตั้ง `unit_item` = สลับ+ขาด slot → kunai ไม่ติด, แก้แล้ว)
 
 ### ความปลอดภัย
-- ถ้า discover ไม่เจอ node/container → **ไม่ยิง remote มั่ว** แค่ log บอกให้รัน `AEKaitun.DumpEquip()`
+- ถ้า discover ไม่เจอ action/container → **ไม่ยิง remote มั่ว** แค่ log บอกให้รัน `AEKaitun.DumpEquip()`
 - ยิงเฉพาะ node ที่ชื่อ match equipment เท่านั้น (ไม่แตะ remote อื่น)
 
 ### เรียกใช้
 - อัตโนมัติ: `init.lua` (หลัง summon/claim/sell ตอนเข้า lobby) + ท้าย `SmartPlay.runRecovery`
 - Debug/ตั้งค่าเอง: `AEKaitun.DumpEquip()` (พิมพ์ชื่อ node/คีย์/ตัวอย่าง entry จริง), `AEKaitun.AutoEquip()`
-- override ใน Config: `["Auto Equip"] = { EquipNode=..., ContainerKey=..., ArgOrder=..., ItemsPerUnit=... }`
-
-### ยังต้องยืนยัน (ให้ clack รัน `AEKaitun.DumpEquip()` ครั้งเดียวแล้วส่งผลกลับมา hardcode)
-- ชื่อ node equip-item จริง + ลำดับ argument (unit ก่อน item หรือกลับกัน / มี slot index ไหม)
-- คีย์ container จริง (`EquipmentData` หรืออื่น) + ชื่อ field ของ entry (`.ID`, `.EquippedTo`, `.Level`, `.Rarity`)
-- จำนวนช่อง equipment ต่อยูนิต (`ItemsPerUnit`)
+- override ใน Config: `["Auto Equip"] = { EquipAction="EquipEquipment", ContainerKey="EquipmentData", ArgOrder="item_unit_slot", ItemsPerUnit=... }`
 
 ## 6g. Placement strategy (`PlacementEngine.lua` + `InGame.lua`)
 
@@ -255,20 +256,32 @@ Lv1 SchoolGrounds → Lv15 FlowerForest → Lv30 Dressrosa → Lv45 FairyKingFor
 - `getPathPoints` / `getPathEndPositions` = `Dependencies.MapState.Paths` (fallback tag `"Path"`)
 - `getEnemyPositions` = `Dependencies.GameEnemies` (fallback `workspace.Enemies`)
 - `canPlaceAt` = `Actions.IsPlacementAllowed` ก่อน → fallback Blockcast จริง (เช็ค tag + ชนยูนิตผ่าน `Nodes.GET_ALL_UNIT_MODELS:InvokeSelf()`)
-- `getThreatEnemies` / `scorePlacePosition(pos,e,pp,pe,threat)` / `buildAAStylePlaceCFrames` = ต้นฉบับ Kaitun (seeds รอบมอนใกล้ฐาน → มอนทั่วไป → โซนฐาน → ตามทาง + emergency scan)
 - `getTotalPlacementCap` = Fallback(per-player Total → Global) คืน `nil` ถ้าอ่านไม่ได้ (ไม่บล็อกด้วยเลขปลอม)
 
-strategy: `scorePlacePosition` ให้คะแนนตามระยะ — ใกล้ threat (มอนใกล้ฐาน) > ใกล้มอนทั่วไป > ปลายทาง (กันฐาน) > ตามทาง ; เรียงช่องฐานด้วย `getAffordableSlotsOrdered` (ฟาร์มท้าย → ถูกก่อน) + เฟส econ ใน `InGame` (สร้างบอดี้ → ฟาร์ม 1 ตัว → ดาเมจ) — **ไม่มี** cluster/anchor/coverage
+**strategy ปัจจุบัน (2026-07 อัปเดต): วางตามจุดที่ศัตรูเดินผ่าน — เลิกวางดักหน้าฐาน**
+- `buildAAStylePlaceCFrames` = หว่าน seed รอบ**มอนทุกตัวที่กำลังเดิน** (cap 8 anchor) → snap ground → เลือกจุดที่ **ชิดเส้นทาง (path) ที่สุด** (`distToNearestPath`) → dedup `minSep=4` → เอา top `count`. ไม่มีมอน → คืน `{}`
+- `scorePlacePosition(pos,e,pp,pe)` = ระยะถึง path ที่ใกล้สุด (ยิ่งชิดยิ่งดี) — **ไม่เจาะจง frontmost/มอนใกล้ฐาน** อีกต่อไป
+- `getThreatEnemies`/`getFrontmostEnemy` ยัง export ไว้ (ใช้แค่ปรับ TTL cache ใน `InGame.getPoints`) แต่ไม่ใช้ชี้จุดวางแล้ว
+- เรียงช่องด้วย `getAffordableSlotsOrdered` (**Magical ก่อน → แพง → ถูก**) — ไม่มีเฟส econ/cluster/anchor/coverage
 
-เพิ่มอย่างเดียว: **เน้นเลือกวาง Magical ก่อน**
-- `isMagicalUnit(asset)` — เช็ค `Archetype/DamageType/Type == "Magical"` จาก `GetUpgradeStats`/`Information:GetAsset` (cache)
-- เฟสดาเมจ (phase 3, ต้อง `CarryFirst`) เรียงช่อง: ฟาร์มท้าย → **Magical ก่อน** → ถูกสุด (ตาม Kaitun.lua เป๊ะ — วางบอดี้ไว ไม่เอา DPS-first ที่ทำให้ชอบตัวแพงวางช้า)
-- ถ้า detect Magical ไม่เจอ (field ชื่อแปลก) → `AEKaitun.DumpUnitType("<asset>")` ดู field จริง
+**Magical detection (แก้ 2026-07):** `Archetype` อยู่ระดับ **top-level ของ unit info** (ไม่ใช่ใน `UpgradeStats`)
+- `getAssetInfo(asset)` = ลอง `Dependencies.Information:GetAsset` → `getCachedInformation():GetAsset` → `UnitUtils:GetUnitInfo` (= `Information:GetAsset`)
+- `getUnitArchetype(asset)` = `info.Archetype or info.DamageType or info.Type` ; `isMagicalUnit` = `== "Magical"` (cache)
+- debug: `getAffordableSlotsOrdered` print `SlotOrder` (asset/cost/arche/magic/ลำดับ) ทุก ~8 วิ + `AEKaitun.DumpUnitType("<asset>")`
+
+**Smart Targeting (ใหม่ 2026-07):** ทุก unit เลือกเป้า Boss ถ้ามีบอส ไม่งั้น Closest
+- `PlacementEngine.isBossPresent()` = `Nodes.GET_ENEMY_INFOS:InvokeSelf(models)` → enemy `Info.Type` มี `"Boss"` (fallback ชื่อโมเดล)
+- `InGame.manageUnitTargeting()` = วน `GameUnits[modelInstance]` → `peek().ID` + `.TargetPriority` → ยิง `replica:FireServer("ChangeGameUnitPriority", gameUnitId, priority)` เฉพาะตัวที่ไม่ตรง (กัน Please wait)
+- loop ทุก `Targeting Interval` (1.5 วิ) ตอนอยู่ในแมตช์ ; reset cache ตอนออก
 
 Config:
 ```lua
 ["Place Magical First"] = true
 ["Smart Placement"] = { Enabled=true, CarryFirst=true }
+["Smart Targeting"] = true
+["Targeting Boss Priority"] = "Boss"
+["Targeting Default Priority"] = "Closest"
+["Targeting Interval"] = 1.5
 ```
 
 ## 7. จุดที่ยังเป็นข้อสังเกต (ความเสี่ยงต่ำ ไม่ได้แก้เพราะมี fallback ครอบอยู่แล้ว)

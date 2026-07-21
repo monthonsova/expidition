@@ -32,6 +32,7 @@ local getSlotPlacementCost = PlacementEngine.getSlotPlacementCost
 local canAffordSlot = PlacementEngine.canAffordSlot
 local getHotbarSlots = PlacementEngine.getHotbarSlots
 local getEnemyPositions = PlacementEngine.getEnemyPositions
+local isBossPresent = PlacementEngine.isBossPresent
 local getPathEndPositions = PlacementEngine.getPathEndPositions
 local getPathPoints = PlacementEngine.getPathPoints
 local getThreatEnemies = PlacementEngine.getThreatEnemies
@@ -95,6 +96,99 @@ local function enableAutoSkip()
     end)
 end
 
+-- ------------------------------------------------------------------------
+-- Smart Targeting: ทุก unit เลือกเป้า Boss (ถ้ามีบอส) ไม่งั้น Closest
+-- ยิงผ่าน replica:FireServer("ChangeGameUnitPriority", gameUnitId, priority)
+-- (ยืนยันจาก decompile expidition_lobby.rbxlx:429026-429032)
+-- ------------------------------------------------------------------------
+local targetingRunning = false
+local lastPriorityByUnit = {} -- gameUnitId -> priority ที่ตั้งไว้ล่าสุด (reset ตอนออกแมตช์)
+
+local function unwrapVal(v)
+    if typeof(v) == "table" then
+        local ok, peeked = pcall(peek, v)
+        if ok and peeked ~= v then
+            return peeked
+        end
+    end
+    return v
+end
+
+local function isOwnPlacedUnit(data)
+    if typeof(data) ~= "table" then
+        return false
+    end
+    if unwrapVal(data.IsPhantom) == true or unwrapVal(data.IsClone) == true then
+        return false
+    end
+    local o = unwrapVal(data.Owner)
+    return o == LocalPlayer
+        or o == LocalPlayer.UserId
+        or o == LocalPlayer.Name
+        or tostring(o) == tostring(LocalPlayer.UserId)
+end
+
+local function manageUnitTargeting()
+    if _G.Settings["Smart Targeting"] == false then
+        return
+    end
+    local rep = getGamePlayerReplica()
+    if not rep then
+        return
+    end
+    local bossPri = tostring(_G.Settings["Targeting Boss Priority"] or "Boss")
+    local defPri = tostring(_G.Settings["Targeting Default Priority"] or "Closest")
+    local bossNow = isBossPresent()
+    local desired = bossNow and bossPri or defPri
+
+    local units = peek(Dependencies.GameUnits)
+    if typeof(units) ~= "table" then
+        return
+    end
+    local fired = 0
+    for _, state in pairs(units) do
+        local data = unwrapVal(state)
+        if typeof(data) == "table" and isOwnPlacedUnit(data) then
+            local id = unwrapVal(data.ID) or unwrapVal(data.GameID)
+            if id ~= nil then
+                local cur = tostring(unwrapVal(data.TargetPriority) or "")
+                local last = lastPriorityByUnit[id]
+                if cur ~= desired and last ~= desired then
+                    lastPriorityByUnit[id] = desired
+                    pcall(function()
+                        rep:FireServer("ChangeGameUnitPriority", id, desired)
+                    end)
+                    fired += 1
+                    task.wait(0.15) -- กัน "Please wait before doing that again!"
+                end
+            end
+        end
+    end
+    if fired > 0 then
+        print(("[AE Kaitun] Targeting → %s (boss=%s) | set %d ตัว"):format(
+            desired, tostring(bossNow), fired))
+    end
+end
+
+local function startTargetingManager()
+    if targetingRunning then
+        return
+    end
+    if _G.Settings["Smart Targeting"] == false then
+        return
+    end
+    targetingRunning = true
+    task.spawn(function()
+        while isInGame() do
+            pcall(manageUnitTargeting)
+            task.wait(math.clamp(tonumber(_G.Settings["Targeting Interval"]) or 1.5, 0.6, 5))
+        end
+        targetingRunning = false
+        -- ออกจากแมตช์ → ล้าง cache priority
+        lastPriorityByUnit = {}
+    end)
+end
+
 local settingsApplied = false
 local unitSettingsApplied = false
 local lastStoryProgressMode = nil -- "grind" | "farm" | nil
@@ -123,14 +217,16 @@ local function applyStoryProgressSettings(force)
     lastStoryProgressMode = mode
 
     if mode == "grind" then
+        -- Grind: bot คุม Repeat เอง (Victory→Restart / Defeat→Restart) ผ่าน SHOW_END_SCREEN
+        -- ปิด AutoRetry/AutoNext ของเกม กันเกมส่งกลับ lobby หรือ Restart ทับ (double)
         pcall(function()
             Nodes.CLIENT_CHANGE_SETTING:FireServer("AutoNext", false)
         end)
         task.wait(0.35)
         pcall(function()
-            Nodes.CLIENT_CHANGE_SETTING:FireServer("AutoRetry", true)
+            Nodes.CLIENT_CHANGE_SETTING:FireServer("AutoRetry", false)
         end)
-        print("[AE Kaitun] AutoRetry = on | AutoNext = off (ล็อก",
+        print("[AE Kaitun] Grind: AutoRetry/AutoNext = off | bot Repeat ด่านเดิมในแมตช์ (ล็อก",
             getGrindStage().ActName, getGrindStage().MapName, ")")
     elseif mode == "farm_last" then
         -- Act สุดท้าย — ห้าม AutoNext ไปแมพอื่น
@@ -327,6 +423,8 @@ local function autoPlaceUnits()
     end
     placeRunning = true
 
+    startTargetingManager()
+
     print("[AE Kaitun] เริ่มวาง (Yen + Limit + จุด hard เท่านั้น) — วนจนกว่าครบลิมิต")
     waitForPlacementReady(6)
     task.wait(0.2)
@@ -511,7 +609,7 @@ local function autoPlaceUnits()
             end
 
             -- strategy: slots มาเรียงมาแล้วจาก getAffordableSlotsOrdered (Magical ก่อน → แพง → ถูก)
-            -- วางเฉพาะบริเวณมอนที่เดินนำหน้าไกลสุด (buildAAStylePlaceCFrames สร้างจุดรอบ frontmost เท่านั้น)
+            -- วางตามจุดที่ศัตรูเดินผ่าน ชิดเส้นทาง (buildAAStylePlaceCFrames — ไม่วางดักหน้าฐาน)
             local placedThisRound = false
             local noPoint = 0
             local tried = 0
@@ -690,6 +788,26 @@ local function setupEndScreenHandler()
                         if getAutoFarm().Enabled then
                             task.wait(1.2)
                             applyStoryProgressSettings(true)
+                            -- Grind: ฟาร์มด่านเดิมวนในแมตช์ (Repeat) — ไม่ต้องกลับ lobby
+                            if isInGrindMode() then
+                                if restartDisabled then
+                                    -- แมพนี้ Repeat ไม่ได้ → จำเป็นต้องกลับ lobby เข้าใหม่
+                                    print("[AE Kaitun] Grind Victory (Repeat ปิด) — กลับ lobby เข้าด่านเดิมใหม่")
+                                    returnToLobbyFromMatch("grind victory (restart disabled)")
+                                    return
+                                end
+                                print("[AE Kaitun] Grind Victory — Repeat ด่านเดิม (ไม่กลับ lobby)")
+                                if isInGame() then
+                                    placeRunning = false
+                                    restartCurrentMatch("grind replay (victory)")
+                                    task.delay(3.5, function()
+                                        if isInGame() and not placeRunning then
+                                            autoPlaceUnits()
+                                        end
+                                    end)
+                                end
+                                return
+                            end
                             -- เคลียร์แมพครบแล้ว → กลับ lobby เข้า Grind (ห้าม Next ไปแมพอื่น)
                             if tryEnterGrindAfterMapClear() then
                                 print("[AE Kaitun] Victory ครบแมพ Clear — กลับ lobby → Grind")
@@ -955,6 +1073,8 @@ InGame.acceptVoteReplica = acceptVoteReplica
 InGame.setupAutoVoteStart = setupAutoVoteStart
 InGame.setupEndScreenHandler = setupEndScreenHandler
 InGame.autoPlaceUnits = autoPlaceUnits
+InGame.manageUnitTargeting = manageUnitTargeting
+InGame.startTargetingManager = startTargetingManager
 InGame.runInGame = runInGame
 
 return InGame
