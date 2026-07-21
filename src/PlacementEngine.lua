@@ -862,33 +862,41 @@ end
 
 -- ยิ่งใกล้ = คะแนนยิ่งดี (เลขน้อยกว่า) — strategy แบบ Kaitun.lua (กระจายตามทาง+ใกล้มอน)
 -- น้ำหนัก: มอนใกล้ฐาน > ใกล้มอนทั่วไป > ใกล้ปลายทาง > ใกล้ทาง
+-- ยิ่งใกล้ = คะแนนยิ่งดี (เลขน้อยกว่า)
+-- กลยุทธ์เน้นวางใกล้มอนสเตอร์ตัวที่ใกล้ฐานที่สุดก่อนเสมอ (threatEnemies[1])
 local function scorePlacePosition(pos, enemies, pathPoints, pathEnds, threatEnemies)
     local nearEnemy = _G.Settings["Place Near Enemies"] ~= false
     local nearPath = _G.Settings["Place Near Path"] ~= false
+    
     local eDist = (#enemies > 0) and minDistToPoints(pos, enemies) or 9999
-    local tDist = (threatEnemies and #threatEnemies > 0) and minDistToPoints(pos, threatEnemies) or eDist
     local pDist = (#pathPoints > 0) and distToNearestPath(pos, pathPoints) or 9999
     local endDist = (pathEnds and #pathEnds > 0) and minDistToPoints(pos, pathEnds) or 9999
+    
+    -- ศัตรูตัวที่ใกล้ฐานเราที่สุด (Threat #1)
+    local leadingThreat = (threatEnemies and #threatEnemies > 0) and threatEnemies[1] or nil
+    local leadingThreatDist = leadingThreat and distFlat(pos, leadingThreat) or eDist
 
     local score = 0
     if nearEnemy and #enemies > 0 then
-        -- มอนที่ใกล้ฐานสำคัญสุด
-        score += tDist * 6 + eDist * 2
-        -- ถ้ามอนบุกใกล้ฐานแล้ว → ดึงจุดวางเข้าโซนฐานด้วย
-        if endDist < 55 then
-            score += endDist * 1.5
+        -- เน้นระยะห่างจากศัตรูตัวที่ใกล้ฐานที่สุดเป็นอันดับ 1 (น้ำหนัก x18)
+        score += leadingThreatDist * 18.0 + eDist * 1.5
+        
+        -- ถ้าศัตรูใกล้ฐานมาก (<65 studs) ให้ดึงจุดวางไปดักหน้าฐานด้วย
+        if endDist < 65 then
+            score += endDist * 1.2
         else
-            score += endDist * 0.35
+            score += endDist * 0.25
         end
-        score += pDist * 0.8
+        score += pDist * 0.5
         return score
     end
+    
     if nearPath and #pathPoints > 0 then
-        -- ไม่มีมอน: กันฐานก่อน (ปลายทาง) แล้วค่อยกระจายตามทาง
-        return endDist * 3 + pDist * 2 + eDist
+        -- ไม่มีมอน: วางดักโซนหน้าฐานก่อน (ปลายทาง) แล้วค่อยกระจายตามทาง
+        return endDist * 3.5 + pDist * 1.5 + eDist
     end
-    return tDist + eDist + endDist + pDist
-end
+    
+    return leadingThreatDist * 10 + endDist * 2 + pDist
 
 local function unwrapNumber(v)
     if v == nil then
