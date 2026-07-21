@@ -167,11 +167,11 @@ local defaultSettings = {
         },
 
         -- แพ้ติดกันกี่ครั้งแล้ว soft-reset (กลับ lobby คิวเดิมบนเซิร์ฟใหม่) - 0 = ปิด
-        FailSoftReset = 8,
+        FailSoftReset = 3,
     },
 
     -- alias ระดับบน (อ่านได้ทั้งสองที่)
-    ["Fail Soft Reset"] = 8,
+    ["Fail Soft Reset"] = 3,
 
     -- แพ้ติด / soft-reset -> SmartPlay: เคลียร์กระเป๋า -> สุ่ม -> ฟีด/evolve -> ทีมใหม่
     ["Smart Play Enabled"] = true,
