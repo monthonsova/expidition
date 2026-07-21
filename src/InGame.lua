@@ -329,6 +329,168 @@ local function autoPlaceUnits()
     end
     placeRunning = true
 
+    waitForPlacementReady(6)
+
+    local delaySec = math.clamp(tonumber(_G.Settings["Place Delay"]) or 0.85, 0.75, 2.5)
+    local maxPerSlot = tonumber(_G.Settings["Max Place Per Slot"]) or 4
+
+    task.spawn(function()
+        local attempts = 0
+        local everPlaced = false
+
+        while placeRunning and isInGame() do
+            attempts += 1
+
+            local owned = countOwnPlacedUnits()
+            local totalCap = getTotalPlacementCap()
+
+            if isAtTotalPlacementCap(owned, totalCap) then
+                print("[AE Kaitun] Reach TotalPlacementCap", owned, "/", totalCap, "-> Stop Placing")
+                break
+            end
+
+            -- Fetch slots ordered by: 1) Magical units first -> 2) Expensive to Cheap
+            local affordableSlots = getAffordableSlotsOrdered()
+
+            if #affordableSlots == 0 then
+                task.wait(0.7)
+            else
+                local placedThisRound = false
+
+                for _, slot in ipairs(affordableSlots) do
+                    if not placeRunning or not isInGame() then break end
+
+                    local asset = getSlotAsset(slot)
+                    if asset and asset ~= "" then
+                        local canMore, placedN, limit = canPlaceMoreOfAsset(asset)
+                        local cap = math.min(maxPerSlot, limit)
+
+                        if placedN < cap then
+                            -- Build placement CFrames (targeted near front-most enemy)
+                            local cframes = buildAAStylePlaceCFrames(asset, cap - placedN)
+                            local cf = cframes and cframes[1]
+
+                            if cf and canPlaceAt(asset, cf) then
+                                local yenNow = getGameYen()
+                                print(("[AE Kaitun] Placing %s (Magical=%s, Slot=%d) %d/%d Yen=%s"):format(
+                                    tostring(asset), tostring(isMagicalUnit(asset)), slot, placedN + 1, cap, tostring(yenNow)
+                                ))
+
+                                local beforeOwned = countOwnPlacedUnits()
+                                local beforeAsset = countOwnPlacedByAsset(asset)
+
+                                placeUnit(slot, cf)
+
+                                task.wait(0.3)
+                                local afterAsset = countOwnPlacedByAsset(asset)
+                                local afterOwned = countOwnPlacedUnits()
+
+                                if afterAsset > beforeAsset or afterOwned > beforeOwned then
+                                    placedThisRound = true
+                                    everPlaced = true
+                                    task.wait(delaySec)
+                                    break
+                                end
+                            end
+                        end
+                    end
+                end
+
+                if not placedThisRound then
+                    task.wait(0.6)
+                end
+            end
+
+            if attempts >= 300 then
+                break
+            end
+        end
+
+        placeRunning = false
+    end)
+end
+
+local function setupAutoVoteStart()
+    if not _G.Settings["Auto Vote Start"] then
+        return
+    end
+
+    enableAutoVoteSetting()
+
+    if voteHooked then
+        return
+    end
+    voteHooked = true
+
+    pcall(function()
+        ReplicaClient.OnNew("VotePrompt", function(replica)
+            task.defer(function()
+                for _ = 1, 20 do
+                    local data = replica.Data
+                    local params = data and (data.Parameters or data)
+                    local title = params and tostring(params.Title or "")
+                    local text = params and tostring(params.Text or "")
+                    if title ~= "" or text ~= "" then
+                        acceptVoteReplica(replica, title ~= "" and title or text)
+                        return
+                    end
+                    task.wait(0.1)
+                end
+                acceptVoteReplica(replica, "VotePrompt(no title)")
+            end)
+        end)
+    end)
+end
+
+-- Shared.IsGameActive จริงคือ FusionPackage.Shared (คนละตัวกับ ReplicatedStorage.Shared folder ที่เราใช้)
+-- นิยาม = KeyOf(Dependencies.GameState, "Active") → อ่าน field ตรงจาก GameState เองได้เลย ไม่ต้อง require โมดูลเพิ่ม
+local function isGameActive()
+    local ok, gs = pcall(peek, Dependencies.GameState)
+    if ok and typeof(gs) == "table" then
+        return gs.Active == true
+    end
+    return false
+end
+
+-- SelectedHotbarIndex จริงคือ named-state จาก Fusion "State" extension (v4:GetState("SelectedHotbarIndex"))
+-- ตัวเดียวกันทุกที่ที่เรียกชื่อนี้ (คีย์ตามชื่อ ไม่ผูกกับ scope ที่สร้าง) — ใช้ Dependencies.scope เรียกได้เลย
+local function clearHotbarSelection()
+    pcall(function()
+        local scope = Dependencies.scope
+        if scope and typeof(scope.GetState) == "function" then
+            local state = scope:GetState("SelectedHotbarIndex")
+            if state and typeof(state.set) == "function" then
+                state:set(nil)
+            end
+        end
+    end)
+end
+
+local function waitForPlacementReady(timeout)
+    timeout = timeout or 45
+    local t0 = os.clock()
+    while os.clock() - t0 < timeout do
+        local hotbar = peek(Dependencies.HotbarState)
+        local allowed = hotbar and hotbar.PlacementAllowed
+        local active = isGameActive()
+        local rep = getGamePlayerReplica()
+        if rep and (allowed == true or active == true) then
+            return true
+        end
+        task.wait(0.25)
+    end
+    return getGamePlayerReplica() ~= nil
+end
+
+local function autoPlaceUnits()
+    if not _G.Settings["Auto Place Units"] then
+        return
+    end
+    if placeRunning then
+        return
+    end
+    placeRunning = true
+
     print("[AE Kaitun] เริ่มวาง (Yen + Limit + จุด hard เท่านั้น) — วนจนกว่าครบลิมิต")
     waitForPlacementReady(6)
     task.wait(0.2)
