@@ -3,6 +3,15 @@
     PlaceId: 84515722934860
 ]]
 
+-- ------------------------------------------------------------------------
+-- Duplicate Execution Protection (Anti-Double Execution)
+-- ------------------------------------------------------------------------
+if getgenv()._AEKaitunLoaded then
+    warn("[AE Kaitun] Script is already running! Skipping duplicate execution.")
+    return _G.AEKaitun_Loader
+end
+getgenv()._AEKaitunLoaded = true
+
 local Loader = {
     -- Change BaseUrl to your GitHub repository raw URL when uploaded
     BaseUrl = _G.AEKaitun_BaseUrl or "https://raw.githubusercontent.com/monthonsova/expidition/main/",
@@ -48,8 +57,11 @@ end
 -- Load Configuration
 Loader.require("Config.lua")
 
--- Load Core ก่อนเสมอ (Services/Nodes/Dependencies/Shared/Actions/ReplicaClient/peek ที่ทุกโมดูลใช้ร่วมกัน)
+-- Load Core ก่อนเสมอ
 local Core = Loader.require("src/Core.lua")
+
+-- Load Anti-AFK & Auto-Rejoin Module
+local AntiAFK = Loader.require("src/AntiAFK.lua")
 
 -- Load Sub-Modules
 local Utils = Loader.require("src/Utils.lua")
@@ -66,6 +78,11 @@ local InGame = Loader.require("src/InGame.lua")
 local StatsUI = Loader.require("src/StatsUI.lua")
 local SmartPlay = Loader.require("src/SmartPlay.lua")
 local FarmLoop = Loader.require("src/FarmLoop.lua")
+
+-- Activate Anti-AFK, Auto-Rejoin, and Auto-Exec Persistence
+AntiAFK.setupAntiAFK()
+AntiAFK.setupAutoRejoin()
+AntiAFK.installAutoExec(Loader.BaseUrl)
 
 -- Print Status
 print("[AE Kaitun Modular] loaded | PlaceId=", game.PlaceId)
@@ -171,6 +188,7 @@ getgenv().AEKaitun = {
         return SmartPlay.countUnitBag(), SmartPlay.getUnitBagLimit(), SmartPlay.getBagFreeSlots()
     end,
     RemakeBestTeam = Team.remakeBestTeam,
+    Rejoin = AntiAFK.triggerRejoin,
 }
 
 return Loader
