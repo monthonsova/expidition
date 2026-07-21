@@ -1,4 +1,4 @@
--- [[
+--[[
 --     AE Kaitun — Starter Unit Module
 -- ]]
 

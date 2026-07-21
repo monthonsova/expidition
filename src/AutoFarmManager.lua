@@ -1,4 +1,4 @@
--- [[
+--[[
 --     AE Kaitun — Auto Farm Progression Module
 -- ]]
 

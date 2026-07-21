@@ -1,4 +1,4 @@
--- [[
+--[[
 --     AE Kaitun — Quests & Rewards Module
 -- ]]
 

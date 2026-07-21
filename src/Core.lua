@@ -1,4 +1,4 @@
--- [[
+--[[
 --     AE Kaitun — Core Bootstrap Module
 --     รวมของที่ทุกโมดูลต้องใช้ร่วมกัน (Services / Nodes / Dependencies / Shared /
 --     Actions / ReplicaClient / peek / waitPeek / cached UnitUtils-Information)

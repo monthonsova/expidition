@@ -1,4 +1,4 @@
--- [[
+--[[
 --     AE Kaitun — Lobby & Matchmaking Module
 -- ]]
 

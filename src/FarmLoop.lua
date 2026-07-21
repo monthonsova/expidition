@@ -1,4 +1,4 @@
--- [[
+--[[
 --     AE Kaitun — Main Farm Loop Orchestrator (Optimized for 24/7 AFK)
 -- ]]
 

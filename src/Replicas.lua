@@ -1,4 +1,4 @@
--- [[
+--[[
 --     AE Kaitun — Replicas & State Module
 -- ]]
 

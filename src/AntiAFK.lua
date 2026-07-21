@@ -1,4 +1,4 @@
--- [[
+--[[
     AE Kaitun — Anti-AFK, Auto-Rejoin & Duplicate Execution Guard
 ]]
 

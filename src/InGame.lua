@@ -1,4 +1,4 @@
--- [[
+--[[
 --     AE Kaitun — In-Game Combat & Unit Placement Module
 -- ]]
 

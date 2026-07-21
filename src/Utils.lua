@@ -1,4 +1,4 @@
--- [[
+--[[
 --     AE Kaitun — Utils Module
 -- ]]
 

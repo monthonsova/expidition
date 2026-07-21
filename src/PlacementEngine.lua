@@ -1,4 +1,4 @@
--- [[
+--[[
 --     AE Kaitun — Placement Engine Module (Math, Pathing & CFrame Algorithms)
 -- ]]
 

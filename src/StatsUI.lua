@@ -1,4 +1,4 @@
--- [[
+--[[
 --     AE Kaitun — Stats UI Module
 -- ]]
 

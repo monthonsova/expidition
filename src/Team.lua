@@ -1,4 +1,4 @@
--- [[
+--[[
 --     AE Kaitun — Team & Hotbar Management Module
 -- ]]
 
