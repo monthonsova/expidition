@@ -479,6 +479,17 @@ local function smartSummonRounds(cfg)
 	local delaySec = math.max(tonumber(_G.Settings["Summon Delay"]) or 4, 2)
 	local did = 0
 
+	-- เช็คเพชรก่อนสุ่ม: ไม่พอ = ข้ามเลย
+	local skipIfNoGems = _G.Settings["Skip Summon If No Gems"] ~= false
+	local costPerPull = Summon.getSummonCostPerPull and Summon.getSummonCostPerPull(banner) or nil
+	if skipIfNoGems and costPerPull and Summon.getGemCount then
+		local gems = Summon.getGemCount()
+		if gems < costPerPull then
+			print(("[AE Kaitun] SmartPlay เพชรไม่พอสุ่ม (มี %d < %d) — ข้ามสุ่ม"):format(gems, costPerPull))
+			return 0
+		end
+	end
+
 	print(("[AE Kaitun] SmartPlay Summon %s ×%d ×%d รอบ"):format(banner, amount, rounds))
 	for i = 1, rounds do
 		if isInGame() then
@@ -489,7 +500,16 @@ local function smartSummonRounds(cfg)
 			warn("[AE Kaitun] SmartPlay กระเป๋ายังเต็ม — หยุดสุ่ม")
 			break
 		end
+		if skipIfNoGems and costPerPull and Summon.getGemCount then
+			local gems = Summon.getGemCount()
+			if gems < costPerPull then
+				print(("[AE Kaitun] SmartPlay เพชรหมด (เหลือ %d) — หยุดสุ่ม"):format(gems))
+				break
+			end
+		end
 		print("[AE Kaitun] SmartPlay summon round", i, "/", rounds)
+		local bagBefore = (Summon.countUnitBag and Summon.countUnitBag()) or 0
+		local freeBefore = getBagFreeSlots()
 		Summon.summonBanner(banner, amount)
 		did += 1
 		for _ = 1, math.max(1, math.floor(delaySec / 0.5)) do
@@ -497,6 +517,12 @@ local function smartSummonRounds(cfg)
 			Summon.closeSummonUiNow()
 		end
 		task.wait(0.6)
+		-- สุ่มแล้วยูนิตไม่เพิ่มทั้งที่มีที่ว่าง = เพชรหมด → หยุด
+		if Summon.countUnitBag and freeBefore >= math.min(amount, 3)
+			and Summon.countUnitBag() <= bagBefore then
+			print("[AE Kaitun] SmartPlay สุ่มแล้วยูนิตไม่เพิ่ม (น่าจะเพชรหมด) — หยุดสุ่ม")
+			break
+		end
 	end
 	Summon.closeSummonUiNow()
 	return did

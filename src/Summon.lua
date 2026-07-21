@@ -311,6 +311,55 @@ local function getItemAmount(itemName)
     return tonumber(entry) or 0
 end
 
+-- เพชรสำหรับสุ่ม (เก็บใน ItemData["Gem"].Amount)
+local function getGemCount()
+    return getItemAmount("Gem")
+end
+
+-- ราคาสุ่ม/พูล 1 ครั้ง — ลองอ่านจาก BannerData ก่อน แล้ว fallback config
+-- คืน number หรือ nil (nil = ไม่รู้ราคา → ให้ใช้ no-op detection แทน)
+local function getSummonCostPerPull(banner)
+    banner = banner or _G.Settings["Summon Banner"] or "Standard"
+    local override = tonumber(_G.Settings["Summon Cost Per Pull"])
+    if override then
+        return override
+    end
+    local cost = nil
+    pcall(function()
+        local all = peek(Dependencies.BannerData)
+        if typeof(all) ~= "table" then
+            return
+        end
+        local bd = all[banner] or all[tostring(banner)]
+        if typeof(bd) ~= "table" then
+            local okb, peeked = pcall(peek, bd)
+            if okb and typeof(peeked) == "table" then
+                bd = peeked
+            else
+                return
+            end
+        end
+        for _, key in ipairs({ "Cost", "Price", "SummonCost", "CostPerSummon", "GemCost", "CostAmount", "SummonPrice" }) do
+            local v = bd[key]
+            if typeof(v) == "table" then
+                local okv, peeked = pcall(peek, v)
+                if okv then
+                    v = peeked
+                end
+                if typeof(v) == "table" then
+                    v = v.Amount or v.Value or v.Gem or v.Gems
+                end
+            end
+            local n = tonumber(v)
+            if n and n > 0 then
+                cost = n
+                return
+            end
+        end
+    end)
+    return cost
+end
+
 local function countUnitsByRarity(rarity)
     local n = 0
     local data = peek(Dependencies.PlayerData)
@@ -775,6 +824,24 @@ local function autoSummonAfterCodes()
     local rounds = tonumber(_G.Settings["Summon Rounds"]) or 8
     local delaySec = math.max(tonumber(_G.Settings["Summon Delay"]) or 4, 2)
 
+    -- เช็คเพชรก่อนสุ่ม: ไม่พอ = ข้ามเลย (ถ้ารู้ราคา) กันยิงรัวเสียเวลา
+    local skipIfNoGems = _G.Settings["Skip Summon If No Gems"] ~= false
+    local costPerPull = getSummonCostPerPull(banner)
+    if skipIfNoGems and costPerPull then
+        local gems = getGemCount()
+        if gems < costPerPull then
+            print(("[AE Kaitun] เพชรไม่พอสุ่ม (มี %d < ราคา %d/ครั้ง) — ข้ามสุ่ม"):format(gems, costPerPull))
+            local Team = getTeamModule()
+            if Team.ensureTeamReady then
+                Team.ensureTeamReady()
+            elseif Team.ensureMythicTeam then
+                Team.ensureMythicTeam()
+            end
+            return
+        end
+        print(("[AE Kaitun] เพชร %d | ราคา ~%d/ครั้ง"):format(gems, costPerPull))
+    end
+
     print("[AE Kaitun] Summon", banner, "×" .. amount, "สูงสุด", rounds, "รอบ | TeamMode=", teamMode)
     print(("[AE Kaitun] เป้า Unique Mythic=%d | Unique Leg=%d | มีแล้ว M=%d L=%d | Lv %d"):format(
         stopMythic, stopLeg, haveMythic, haveLeg, lvl
@@ -812,9 +879,22 @@ local function autoSummonAfterCodes()
             break
         end
 
+        -- เพชรไม่พอกลางทาง → หยุด (ถ้ารู้ราคา)
+        if skipIfNoGems and costPerPull then
+            local gems = getGemCount()
+            if gems < costPerPull then
+                print(("[AE Kaitun] เพชรหมด (เหลือ %d < %d) — หยุดสุ่ม"):format(gems, costPerPull))
+                break
+            end
+        end
+
         print(("[AE Kaitun] Summon round %d/%d | Unique M=%d/%d L=%d/%d"):format(
             i, rounds, haveMythic, stopMythic, haveLeg, stopLeg
         ))
+
+        -- no-op detection: จำนวนยูนิตก่อนสุ่ม (กันเพชรหมดแต่ไม่รู้ราคา)
+        local bagBefore = countUnitBag()
+        local spaceBefore = getUnitBagLimit() - bagBefore
         summonBanner(banner, amount)
 
         for _ = 1, math.max(1, math.floor(delaySec / 0.5)) do
@@ -823,6 +903,11 @@ local function autoSummonAfterCodes()
         end
 
         task.wait(0.8)
+        -- สุ่มแล้วยูนิตไม่เพิ่มทั้งที่มีที่ว่างพอ = สุ่มไม่สำเร็จ (เพชรหมด) → หยุด
+        if spaceBefore >= math.min(amount, 3) and countUnitBag() <= bagBefore then
+            print("[AE Kaitun] สุ่มแล้วยูนิตไม่เพิ่ม (น่าจะเพชรหมด) — หยุดสุ่ม")
+            break
+        end
         haveLeg = countUniqueLegendariesInBag()
         haveMythic = countUniqueMythicsInBag()
         if haveMythic > 0 then
@@ -864,6 +949,8 @@ Summon.getUnitsByRarityInBag = getUnitsByRarityInBag
 Summon.countUniqueByRarityInBag = countUniqueByRarityInBag
 Summon.getSummonTeamUnitsInBag = getSummonTeamUnitsInBag
 Summon.getItemAmount = getItemAmount
+Summon.getGemCount = getGemCount
+Summon.getSummonCostPerPull = getSummonCostPerPull
 Summon.countUnitsByRarity = countUnitsByRarity
 Summon.getBannerPoolByRarity = getBannerPoolByRarity
 Summon.getUnitDisplayName = getUnitDisplayName

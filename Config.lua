@@ -31,6 +31,9 @@ local defaultSettings = {
     ["Summon Amount"] = 10,
     ["Summon Rounds"] = 8,
     ["Summon Delay"] = 4,
+    -- เพชร (ItemData["Gem"]) ไม่พอ → ข้ามการสุ่มเลย ไม่ยิงรัวเสียเวลา
+    ["Skip Summon If No Gems"] = true,
+    ["Summon Cost Per Pull"] = nil, -- nil = auto อ่านจาก BannerData (ใส่ตัวเลขเองได้ถ้าอ่านไม่เจอ)
     ["Summon Unique Legendary"] = {
         { MinLevel = 1,  Count = 4 },
         { MinLevel = 15, Count = 5 },
@@ -80,8 +83,8 @@ local defaultSettings = {
     ["Auto Evolve To Secret"] = false,
 
     -- Auto Equip: ใส่ไอเทมเสริม/อาวุธที่ดีที่สุด → ยูนิตแข็งสุดไล่ทั้งทีม
-    -- เกม decompile ไม่ระบุชื่อ node/คีย์ equipment → โมดูล auto-discover ให้ตอนรัน
-    -- ถ้า discover พลาด รัน AEKaitun.DumpEquip() ในคอนโซลแล้วเอาชื่อจริงมาใส่ override ด้านล่าง
+    -- ยืนยันจาก dump: equip ทำผ่าน Fusion Actions.EquipEquipment(unitId, equipmentId)
+    -- (game remotes อยู่หลัง Actions ไม่ใช่ Nodes) container = EquipmentData
     ["Auto Equip Items"] = true,
     ["Auto Equip"] = {
         Enabled = true,
@@ -90,11 +93,14 @@ local defaultSettings = {
         PreferRarity = true,      -- เรียง item ตาม rarity ก่อน
         PreferHighLevel = true,   -- rarity เท่ากันดู level/enhance
         Delay = 0.4,
-        -- override เมื่อ auto-discover ไม่ตรง (ปล่อย nil = auto)
-        EquipNode = nil,          -- ชื่อคีย์ใน Nodes เช่น "UNIT_EQUIP_ITEM"
+        -- equip ผ่าน Fusion Actions (หลัก) — ปล่อย nil = auto หา EquipEquipment
+        EquipAction = "EquipEquipment",   -- Actions.EquipEquipment(unitId, equipmentId)
+        UnequipAction = "UnequipEquipment",
+        ContainerKey = "EquipmentData",
+        ArgOrder = "unit_item",   -- "unit_item" | "item_unit" | "table"
+        -- fallback ผ่าน Nodes (ถ้าเกมเปลี่ยนไปใช้ remote — ปกติไม่ใช้)
+        EquipNode = nil,
         UnequipNode = nil,
-        ContainerKey = nil,       -- คีย์ใน PlayerData เช่น "EquipmentData"
-        ArgOrder = "unit_item",   -- "unit_item" | "item_unit" | "unit_item_slot"
     },
 
     -- ใช้ตอน Team Mode = "Units" หรือเป็น fallback ถ้ายังไม่มี Mythic/Leg
@@ -189,6 +195,8 @@ local defaultSettings = {
     ["Place Delay"] = 0.85,
     ["Place Near Path"] = true,
     ["Place Near Enemies"] = true,
+    -- วางตัว AoE (ตีโดนหลายตัว) ก่อน single-target ในเฟสดาเมจ = เคลียร์เวฟดีกว่า
+    ["Place AoE First"] = true,
     ["Max Place Per Slot"] = 4,
     ["Max Farm Place"] = 1,
     ["Place Farm After Combat"] = true,
@@ -208,8 +216,9 @@ local defaultSettings = {
     ["Smart Placement"] = {
         Enabled = true,
         RangeCoverage = true, -- ให้คะแนนจุดที่คลุม path ในระยะยิงยูนิตได้มากสุด (ยิงโดนนาน = โหด)
-        CarryFirst = true,    -- เฟสดาเมจ วางตัว DPS สูงสุดก่อน (ลงสนาม+อัปเกรดไว)
+        CarryFirst = true,    -- เฟสดาเมจ วาง AoE ก่อน แล้ว DPS สูงสุด (ลงสนาม+อัปเกรดไว)
         CoverWeight = 8,      -- น้ำหนักโบนัส coverage (สูง = เน้นคลุม path มากกว่าเข้าใกล้มอน)
+        -- จุดที่ยูนิตยิง "ไม่ถึงทางเดินมอนเลย" จะถูกโทษหนัก ไม่วางดักเสียเปล่า (บังคับในโค้ด)
     },
 
     -- UI & Rewards

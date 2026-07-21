@@ -172,6 +172,14 @@ getgenv().AEKaitun = {
     RedeemCodes = Codes.redeemAllCodes,
     AutoSummon = Summon.autoSummonAfterCodes,
     Summon = Summon.summonBanner,
+    Gems = function()
+        local gems = Summon.getGemCount()
+        local cost = Summon.getSummonCostPerPull(_G.Settings["Summon Banner"] or "Standard")
+        print(("[AE Kaitun] เพชร=%d | ราคาสุ่ม/ครั้ง=%s"):format(
+            gems, cost and tostring(cost) or "ไม่รู้ (auto no-op detect)"
+        ))
+        return gems, cost
+    end,
     GetBannerMythics = Summon.printBannerMythics,
     GetBannerMythicNames = Summon.getBannerMythicNames,
     GetBannerPool = Summon.getBannerPoolByRarity,

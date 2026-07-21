@@ -559,18 +559,28 @@ local function autoPlaceUnits()
                     return getSlotPlacementCost(a) < getSlotPlacementCost(b)
                 end)
             elseif phase == 3 and carryFirst then
-                -- เฟสดาเมจ: วางตัว DPS สูงสุดก่อน (carry ลงสนาม+อัปเกรดไว) ฟาร์มไปท้าย
+                -- เฟสดาเมจ: AoE ก่อน (โดนหลายตัว) → แล้ว DPS สูงสุด → ฟาร์มไปท้าย
+                local aoeFirst = _G.Settings["Place AoE First"] ~= false
                 table.sort(slots, function(a, b)
                     local aa, ba = getSlotAsset(a), getSlotAsset(b)
-                    local af = isFarmUnit(aa) and 1 or 0
-                    local bf = isFarmUnit(ba) and 1 or 0
+                    local sa = getUnitCombatStats(aa)
+                    local sb = getUnitCombatStats(ba)
+                    local af = sa.farm and 1 or 0
+                    local bf = sb.farm and 1 or 0
                     if af ~= bf then
                         return af < bf
                     end
-                    local ad = getUnitCombatStats(aa).dps
-                    local bd = getUnitCombatStats(ba).dps
-                    if ad ~= bd then
-                        return ad > bd
+                    -- AoE ลงก่อน single-target
+                    if aoeFirst then
+                        local aAoe = sa.aoe and 1 or 0
+                        local bAoe = sb.aoe and 1 or 0
+                        if aAoe ~= bAoe then
+                            return aAoe > bAoe
+                        end
+                    end
+                    -- effDps = dps ที่บวกโบนัส AoE แล้ว
+                    if sa.effDps ~= sb.effDps then
+                        return sa.effDps > sb.effDps
                     end
                     return getSlotPlacementCost(a) < getSlotPlacementCost(b)
                 end)

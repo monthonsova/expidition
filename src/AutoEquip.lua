@@ -47,10 +47,12 @@ local function getCfg()
         PreferRarity = cfg.PreferRarity ~= false,
         PreferHighLevel = cfg.PreferHighLevel ~= false,
         Delay = math.clamp(tonumber(cfg.Delay) or 0.4, 0.2, 2.0),
-        EquipNode = cfg.EquipNode,       -- string key ใน Nodes (เช่น "UNIT_EQUIP_ITEM")
+        EquipAction = cfg.EquipAction,   -- Fusion Action เช่น "EquipEquipment" (ช่องทางหลัก)
+        UnequipAction = cfg.UnequipAction,
+        EquipNode = cfg.EquipNode,       -- fallback: string key ใน Nodes
         UnequipNode = cfg.UnequipNode,
         ContainerKey = cfg.ContainerKey, -- เช่น "EquipmentData"
-        ArgOrder = tostring(cfg.ArgOrder or "unit_item"), -- unit_item | item_unit | unit_item_slot
+        ArgOrder = tostring(cfg.ArgOrder or "unit_item"), -- unit_item | item_unit | table
     }
 end
 
@@ -257,6 +259,22 @@ local function scanNodesForEquip()
     return toSortedList(equipScore), toSortedList(unequipScore)
 end
 
+-- equip ทำผ่าน Fusion Actions (ยืนยันจาก dump) — หา function ตัวจริง
+local EQUIP_ACTION_NAMES = { "EquipEquipment", "EquipAccessory", "EquipAsset" }
+local UNEQUIP_ACTION_NAMES = { "UnequipEquipment", "UnequipAccessoryFromUnitId", "UnequipAsset" }
+
+local function findAction(names)
+    if typeof(Actions) ~= "table" then
+        return nil, nil
+    end
+    for _, n in ipairs(names) do
+        if typeof(Actions[n]) == "function" then
+            return Actions[n], n
+        end
+    end
+    return nil, nil
+end
+
 local discoverCache = nil
 local function discover(cfg, force)
     cfg = cfg or getCfg()
@@ -264,6 +282,20 @@ local function discover(cfg, force)
         return discoverCache
     end
     local container, containerKey = findContainer(cfg)
+
+    -- ช่องทางหลัก: Fusion Action
+    local equipAction, equipActionName
+    if cfg.EquipAction and typeof(Actions) == "table" and typeof(Actions[cfg.EquipAction]) == "function" then
+        equipAction, equipActionName = Actions[cfg.EquipAction], cfg.EquipAction
+    else
+        equipAction, equipActionName = findAction(EQUIP_ACTION_NAMES)
+    end
+    local unequipAction, unequipActionName
+    if cfg.UnequipAction and typeof(Actions) == "table" and typeof(Actions[cfg.UnequipAction]) == "function" then
+        unequipAction, unequipActionName = Actions[cfg.UnequipAction], cfg.UnequipAction
+    else
+        unequipAction, unequipActionName = findAction(UNEQUIP_ACTION_NAMES)
+    end
 
     local equipHits, unequipHits = scanNodesForEquip()
 
@@ -300,6 +332,10 @@ local function discover(cfg, force)
     discoverCache = {
         container = container,
         containerKey = containerKey,
+        equipAction = equipAction,
+        equipActionName = equipActionName,
+        unequipAction = unequipAction,
+        unequipActionName = unequipActionName,
         equipNode = equipNode,
         equipNodeName = equipNodeName,
         unequipNode = unequipNode,
@@ -414,6 +450,25 @@ end
 ------------------------------------------------------------------------
 -- Fire
 ------------------------------------------------------------------------
+-- ยิงผ่าน Fusion Action (ช่องทางหลัก) — Actions.EquipEquipment(unitId, equipmentId)
+local function fireEquipAction(fn, unitId, itemId, argOrder)
+    local args
+    if argOrder == "item_unit" then
+        args = { itemId, unitId }
+    elseif argOrder == "table" then
+        args = { { UnitId = unitId, UnitID = unitId, EquipmentId = itemId, EquipmentID = itemId, ItemId = itemId, Id = itemId } }
+    else
+        args = { unitId, itemId }
+    end
+    local ok, err = pcall(function()
+        return fn(table.unpack(args))
+    end)
+    if not ok then
+        warn("[AE Kaitun] AutoEquip action error:", tostring(err))
+    end
+    return ok
+end
+
 local function fireEquip(node, unitId, itemId, slotIndex, argOrder)
     local args
     if argOrder == "item_unit" then
@@ -464,14 +519,9 @@ local function autoEquipBestItems(reason)
                 "ตั้ง Auto Equip.ContainerKey หรือรัน AEKaitun.DumpEquip() ดูคีย์จริง")
             return false
         end
-        if not disc.equipNode then
-            local sugg = {}
-            for _, h in ipairs(disc.equipCandidates or {}) do
-                table.insert(sugg, h.name .. (h.verified and "" or "(?)"))
-            end
-            warn("[AE Kaitun] AutoEquip: หา node equip item (verified) ไม่เจอ —",
-                "รัน AEKaitun.DumpEquip() แล้วตั้ง Auto Equip.EquipNode + ArgOrder เอง.",
-                #sugg > 0 and ("candidate: " .. table.concat(sugg, ", ")) or "ไม่มี candidate เลย")
+        if not disc.equipAction and not disc.equipNode then
+            warn("[AE Kaitun] AutoEquip: หา Actions.EquipEquipment / node equip ไม่เจอ —",
+                "ตั้ง Auto Equip.EquipAction เอง หรือรัน AEKaitun.DumpEquip()")
             return false
         end
 
@@ -486,9 +536,10 @@ local function autoEquipBestItems(reason)
             return false
         end
 
-        print(("[AE Kaitun] === AutoEquip (%s) | node=%s | container=%s | items=%d units=%d ==="):format(
-            tostring(reason or "manual"), tostring(disc.equipNodeName),
-            tostring(disc.containerKey), #items, #units
+        local method = disc.equipAction and ("action:" .. tostring(disc.equipActionName))
+            or ("node:" .. tostring(disc.equipNodeName))
+        print(("[AE Kaitun] === AutoEquip (%s) | %s | container=%s | items=%d units=%d ==="):format(
+            tostring(reason or "manual"), method, tostring(disc.containerKey), #items, #units
         ))
 
         local perUnit = cfg.ItemsPerUnit
@@ -511,7 +562,13 @@ local function autoEquipBestItems(reason)
                         tostring(item.Rarity), tostring(item.Asset), item.Level,
                         tostring(unit.Rarity), tostring(unit.Asset), slot
                     ))
-                    if fireEquip(disc.equipNode, unit.ID, item.ID, slot, cfg.ArgOrder) then
+                    local okFire
+                    if disc.equipAction then
+                        okFire = fireEquipAction(disc.equipAction, unit.ID, item.ID, cfg.ArgOrder)
+                    else
+                        okFire = fireEquip(disc.equipNode, unit.ID, item.ID, slot, cfg.ArgOrder)
+                    end
+                    if okFire then
                         fired += 1
                     end
                     task.wait(cfg.Delay)
@@ -554,8 +611,10 @@ local function dump()
         emit("========== AE Kaitun AutoEquip DUMP ==========")
         emit("time =", os.date("%Y-%m-%d %H:%M:%S"))
         emit("PlayerData equipment container key =", tostring(disc.containerKey))
-        emit("equip node (เลือกใช้) =", tostring(disc.equipNodeName))
-        emit("unequip node (เลือกใช้) =", tostring(disc.unequipNodeName))
+        emit("equip ACTION (เลือกใช้) =", tostring(disc.equipActionName))
+        emit("unequip ACTION (เลือกใช้) =", tostring(disc.unequipActionName))
+        emit("equip node (fallback) =", tostring(disc.equipNodeName))
+        emit("unequip node (fallback) =", tostring(disc.unequipNodeName))
         local function fmtCands(hits)
             local s = {}
             for _, h in ipairs(hits or {}) do
