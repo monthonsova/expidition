@@ -48,6 +48,9 @@ end
 -- Load Configuration
 Loader.require("Config.lua")
 
+-- Load Core ก่อนเสมอ (Services/Nodes/Dependencies/Shared/Actions/ReplicaClient/peek ที่ทุกโมดูลใช้ร่วมกัน)
+local Core = Loader.require("src/Core.lua")
+
 -- Load Sub-Modules
 local Utils = Loader.require("src/Utils.lua")
 local Replicas = Loader.require("src/Replicas.lua")

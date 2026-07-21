@@ -1,12 +1,82 @@
 -- [[
---     AE Kaitun — Placement Calculation Engine Module
+--     AE Kaitun — Placement Engine Module (Math, Pathing & CFrame Algorithms)
 -- ]]
 
 local PlacementEngine = {}
+
+local Core = _G.AEKaitun_Loader and _G.AEKaitun_Loader.require("src/Core.lua") or loadstring(readfile("expidition/src/Core.lua"))()
+local Utils = _G.AEKaitun_Loader and _G.AEKaitun_Loader.require("src/Utils.lua") or loadstring(readfile("expidition/src/Utils.lua"))()
 local Replicas = _G.AEKaitun_Loader and _G.AEKaitun_Loader.require("src/Replicas.lua") or loadstring(readfile("expidition/src/Replicas.lua"))()
 
+local Services = Core.Services
+local LocalPlayer = Core.LocalPlayer
+local Workspace = Core.Workspace
+local CollectionService = Core.CollectionService
+local ReplicatedStorage = Core.ReplicatedStorage
+local Nodes = Core.Nodes
+local Dependencies = Core.Dependencies
+local Actions = Core.Actions
+local peek = Core.peek
+
+local getCachedUnitUtils = Utils.getCachedUnitUtils
+local getCachedInformation = Utils.getCachedInformation
+
+local getAccountLevel = Replicas.getAccountLevel
+local getGamePlayerReplica = Replicas.getGamePlayerReplica
+
+-- จุดวางตัวรอบมอน/ฐาน (ใช้สร้างจุด "hard" ที่ canPlaceAt ผ่านใน buildAAStylePlaceCFrames)
+local ENEMY_OFFSETS_NEAR = {
+    Vector3.new(4, 0, 0), Vector3.new(-4, 0, 0),
+    Vector3.new(0, 0, 4), Vector3.new(0, 0, -4),
+    Vector3.new(6, 0, 0), Vector3.new(-6, 0, 0),
+    Vector3.new(0, 0, 6), Vector3.new(0, 0, -6),
+    Vector3.new(5, 0, 5), Vector3.new(-5, 0, -5),
+    Vector3.new(5, 0, -5), Vector3.new(-5, 0, 5),
+    Vector3.new(8, 0, 3), Vector3.new(-8, 0, 3),
+    Vector3.new(3, 0, 8), Vector3.new(3, 0, -8),
+    Vector3.new(7, 0, 7), Vector3.new(-7, 0, 7),
+    Vector3.new(7, 0, -7), Vector3.new(-7, 0, -7),
+}
+local ENEMY_OFFSETS_FAR = {
+    Vector3.new(5, 0, 0), Vector3.new(-5, 0, 0),
+    Vector3.new(0, 0, 5), Vector3.new(0, 0, -5),
+    Vector3.new(8, 0, 0), Vector3.new(0, 0, 8),
+}
+local BASE_OFFSETS = {
+    Vector3.new(4, 0, 4), Vector3.new(-4, 0, 4),
+    Vector3.new(4, 0, -4), Vector3.new(-4, 0, -4),
+}
+local HRP_OFFSETS = {
+    Vector3.new(5, 0, 0), Vector3.new(-5, 0, 0),
+    Vector3.new(0, 0, 5), Vector3.new(0, 0, -5),
+    Vector3.new(8, 0, 8), Vector3.new(-8, 0, -8),
+}
+
+-- HotbarState.Slots[i] = { ID = unitUuid, AssetType = "Unit", ... }
+local function getSlotEntry(slot)
+    local hotbar = peek(Dependencies.HotbarState)
+    local slots = hotbar and hotbar.Slots
+    if typeof(slots) ~= "table" then
+        return nil
     end
     return slots[tostring(slot)] or slots[tonumber(slot)] or slots[slot]
+end
+
+-- ID ยูนิตในฮอตบาร์ → ชื่อ Asset (ดูจาก PlayerData.UnitData)
+local function resolveUnitAsset(unitId)
+    if not unitId then
+        return nil
+    end
+    local pdata = peek(Dependencies.PlayerData)
+    local unitData = pdata and pdata.UnitData
+    if typeof(unitData) ~= "table" then
+        return nil
+    end
+    local unit = unitData[unitId] or unitData[tostring(unitId)]
+    if typeof(unit) == "table" then
+        return unit.Asset or unit.Name
+    end
+    return nil
 end
 
 local function unwrapBool(v)
@@ -728,28 +798,22 @@ local function unwrapNumber(v)
 end
 
 local function getTotalPlacementCap()
-    -- เหมือน HUD: Fallback(player.TotalUnitPlacementCap, game.GlobalUnitPlacementCap)
-    -- ห้าม fallback 8 แล้วอั้นวาง — ค่า 8 เป็น default เก่า/อ่านพลาดบ่อย
-    local best = nil
-    local source = "none"
+    -- ตรงกับเกมจริง (ยืนยันจาก decompile): Fallback(player.TotalUnitPlacementCap, game.GlobalUnitPlacementCap)
+    -- คือ "ใช้ค่าเฉพาะผู้เล่นก่อนถ้ามี ไม่ใช่เอาค่ามากสุด" — เอา max ผิด เพราะ Global อาจสูงกว่า Total แล้วเข้าใจว่าวางได้เกินจริง
+    local total, global = nil, nil
 
-    local function consider(n, src)
+    local function validNum(n)
         if typeof(n) ~= "number" or n ~= n or n <= 0 then
-            return
+            return nil
         end
-        -- ใช้ค่าสูงสุด (กันอ่านค่าเก่าต่ำแล้วหยุดวางทั้งที่ยังวางได้)
-        if best == nil or n > best then
-            best = n
-            source = src
-        end
+        return n
     end
 
     pcall(function()
         local scope = Dependencies.scope
         if scope and typeof(scope.KeyOf) == "function" then
-            consider(unwrapNumber(peek(scope:KeyOf(Dependencies.GamePlayerState, "TotalUnitPlacementCap"))),
-                "KeyOf.PlayerTotal")
-            consider(unwrapNumber(peek(scope:KeyOf(Dependencies.GameState, "GlobalUnitPlacementCap"))), "KeyOf.Global")
+            total = total or validNum(unwrapNumber(peek(scope:KeyOf(Dependencies.GamePlayerState, "TotalUnitPlacementCap"))))
+            global = global or validNum(unwrapNumber(peek(scope:KeyOf(Dependencies.GameState, "GlobalUnitPlacementCap"))))
         end
     end)
 
@@ -757,10 +821,10 @@ local function getTotalPlacementCap()
         local gps = peek(Dependencies.GamePlayerState)
         local gs = peek(Dependencies.GameState)
         if typeof(gps) == "table" then
-            consider(unwrapNumber(unwrapField(gps.TotalUnitPlacementCap)), "gps.Total")
+            total = total or validNum(unwrapNumber(unwrapField(gps.TotalUnitPlacementCap)))
         end
         if typeof(gs) == "table" then
-            consider(unwrapNumber(unwrapField(gs.GlobalUnitPlacementCap)), "gs.Global")
+            global = global or validNum(unwrapNumber(unwrapField(gs.GlobalUnitPlacementCap)))
         end
     end)
 
@@ -769,13 +833,16 @@ local function getTotalPlacementCap()
         local rep = getGamePlayerReplica()
         local data = rep and (rep.Data or rep.data)
         if typeof(data) == "table" then
-            consider(unwrapNumber(data.TotalUnitPlacementCap), "replica.Total")
+            total = total or validNum(unwrapNumber(data.TotalUnitPlacementCap))
         end
     end)
 
+    local best = total or global
+    local source = total and "Total" or (global and "Global" or "none")
+
     if not getgenv()._AE_CAP_DEBUG then
         getgenv()._AE_CAP_DEBUG = true
-        print("[AE Kaitun] PlacementCap=", best, "| source=", source)
+        print("[AE Kaitun] PlacementCap=", best, "| source=", source, "| total=", total, "| global=", global)
     end
 
     -- อ่านไม่ได้ → ไม่บล็อกด้วยตัวเลขปลอม (ให้เซิร์ฟตัดสิน)
@@ -1154,143 +1221,28 @@ local function canPlaceMoreOfAsset(asset)
     return true, placed, perCap
 end
 
-local placeRunning = false
-local function autoPlaceUnits()
-    if not _G.Settings["Auto Place Units"] then
-        return
-    end
-    if placeRunning then
-        return
-    end
-    placeRunning = true
-
-    print("[AE Kaitun] เริ่มวาง (Yen + Limit + จุด hard เท่านั้น) — วนจนกว่าครบลิมิต")
-    waitForPlacementReady(6)
-    task.wait(0.2)
-
-    -- ปิด ghost placement ของ UI กันกด Place แล้วขึ้น "cannot place"
-    pcall(function()
-        Shared.SelectedHotbarIndex:set(nil)
-    end)
-
-    local delaySec = math.clamp(tonumber(_G.Settings["Place Delay"]) or 0.85, 0.75, 2.5)
-    local maxPerSlot = tonumber(_G.Settings["Max Place Per Slot"]) or 4
-    local pointCache = {} -- asset -> { hard, t, idx }
-    local skipAsset = {}
-    local everPlaced = false
-    local lastRebuildWarn = 0
-    local failStreak = 0
-
-    local function getPoints(asset, force)
-        local meta = pointCache[asset]
-        local now = os.clock()
-        local enemies = getEnemyPositions()
-        local pathEnds = getPathEndPositions(getPathPoints())
-        local threat = getThreatEnemies(enemies, pathEnds, 4)
-        local nearBase = false
-        if #threat > 0 and #pathEnds > 0 then
-            nearBase = minDistToPoints(threat[1], pathEnds) < 70
-        end
-        -- มอนใกล้ฐาน → cache สั้น; hard ว่าง → ห้าม cache นาน
-        local ttl = nearBase and 0.45 or ((#enemies > 0) and 0.85 or 2.0)
-        local cachedHard = meta and meta.hard or nil
-        if not force and meta and (now - meta.t) < ttl and cachedHard and #cachedHard > 0 then
-            return cachedHard
-        end
-        local _, placed, limit = canPlaceMoreOfAsset(asset)
-        local need = math.max(4, math.min(12, (limit - placed) + 4))
-        local hard = buildAAStylePlaceCFrames(asset, need)
-        pointCache[asset] = {
-            hard = hard or {},
-            t = now,
-            idx = 1,
-        }
-        return pointCache[asset].hard
-    end
-
-    local function nextPlaceCFrame(asset)
-        local hard = getPoints(asset, false)
-        local meta = pointCache[asset]
-        if not hard or #hard == 0 then
-            -- บังคับรีบิลด์ครั้งหนึ่ง
-            hard = getPoints(asset, true)
-            meta = pointCache[asset]
-        end
-        if not hard or #hard == 0 then
-            return nil
-        end
-
-        -- หาจุดที่ยัง IsPlacementAllowed ตอนนี้ — จุดเสียตัดทิ้งเลย
-        local guard = #hard + 2
-        while #hard > 0 and guard > 0 do
-            guard -= 1
-            local i = meta.idx or 1
-            if i < 1 or i > #hard then
-                i = 1
-            end
-            local cf = hard[i]
-            meta.idx = i + 1
-            if cf and canPlaceAt(asset, cf) then
-                return cf
-            end
-            table.remove(hard, i)
-            if meta.idx > i then
-                meta.idx -= 1
-            end
-        end
-        return nil
-    end
-
-    local function dropPoint(asset, cf)
-        local meta = pointCache[asset]
-        if not meta or not meta.hard or not cf then
-            return
-        end
-        for i, p in ipairs(meta.hard) do
-            if p == cf or (p.Position - cf.Position).Magnitude < 0.5 then
-                table.remove(meta.hard, i)
-                break
-            end
-        end
-    end
-
-    local function allAssetsAtLimit(slots)
-        if #slots == 0 then
-            return true
-        end
-        for _, slot in ipairs(slots) do
-            local asset = getSlotAsset(slot)
-            if asset then
-                local placed = countOwnPlacedByAsset(asset)
-                local lim = math.min(maxPerSlot, getPlacementLimit(asset))
-                if placed < lim then
-                    return false
-                end
-            end
-        end
-        return true
-    end
-
-    task.spawn(function()
-        local attempts = 0
-        while isInGame() do
-            attempts += 1
-            if attempts > 300 then
-                attempts = 1
-                skipAsset = {}
-                pointCache = {}
-            end
-
-            pcall(function()
-                Shared.SelectedHotbarIndex:set(nil)
-            end)
-
-            local slots = getAffordableSlotsOrdered()
-
-
+PlacementEngine.getSlotEntry = getSlotEntry
+PlacementEngine.resolveUnitAsset = resolveUnitAsset
 PlacementEngine.buildAAStylePlaceCFrames = buildAAStylePlaceCFrames
 PlacementEngine.scorePlacePosition = scorePlacePosition
 PlacementEngine.canPlaceAt = canPlaceAt
 PlacementEngine.getAffordableSlotsOrdered = getAffordableSlotsOrdered
+PlacementEngine.canPlaceMoreOfAsset = canPlaceMoreOfAsset
+PlacementEngine.getPlacementLimit = getPlacementLimit
+PlacementEngine.countOwnPlacedByAsset = countOwnPlacedByAsset
+PlacementEngine.countOwnPlacedUnits = countOwnPlacedUnits
+PlacementEngine.getTotalPlacementCap = getTotalPlacementCap
+PlacementEngine.isAtTotalPlacementCap = isAtTotalPlacementCap
+PlacementEngine.getSlotAsset = getSlotAsset
+PlacementEngine.getSlotPlacementCost = getSlotPlacementCost
+PlacementEngine.canAffordSlot = canAffordSlot
+PlacementEngine.getHotbarSlots = getHotbarSlots
+PlacementEngine.isFarmUnit = isFarmUnit
+PlacementEngine.getEnemyPositions = getEnemyPositions
+PlacementEngine.getPathEndPositions = getPathEndPositions
+PlacementEngine.getPathPoints = getPathPoints
+PlacementEngine.getThreatEnemies = getThreatEnemies
+PlacementEngine.minDistToPoints = minDistToPoints
+PlacementEngine.getGameYen = getGameYen
 
 return PlacementEngine

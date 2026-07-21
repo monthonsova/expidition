@@ -4,57 +4,18 @@
 
 local Utils = {}
 
-local Services = {
-    Players = game:GetService("Players"),
-    ReplicatedStorage = game:GetService("ReplicatedStorage"),
-    Lighting = game:GetService("Lighting"),
-}
+local Core = _G.AEKaitun_Loader and _G.AEKaitun_Loader.require("src/Core.lua") or loadstring(readfile("expidition/src/Core.lua"))()
 
-local function getCachedUnitUtils()
-    if not cachedUnitUtils then
-        pcall(function()
-            cachedUnitUtils = require(ReplicatedStorage.Shared.UnitUtils)
-        end)
-    end
-    return cachedUnitUtils
-end
+local Services = Core.Services
+local LocalPlayer = Core.LocalPlayer
+local Workspace = Core.Workspace
+local Lighting = Core.Lighting
+local Terrain = Core.Terrain
+local ReplicatedStorage = Core.ReplicatedStorage
 
-local cachedInformation = nil
-local function getCachedInformation()
-    if not cachedInformation then
-        pcall(function()
-            cachedInformation = require(ReplicatedStorage.Shared.Information)
-        end)
-    end
-    return cachedInformation
-end
-
-local ENEMY_OFFSETS_NEAR = {
-    Vector3.new(4, 0, 0), Vector3.new(-4, 0, 0),
-    Vector3.new(0, 0, 4), Vector3.new(0, 0, -4),
-    Vector3.new(6, 0, 0), Vector3.new(-6, 0, 0),
-    Vector3.new(0, 0, 6), Vector3.new(0, 0, -6),
-    Vector3.new(5, 0, 5), Vector3.new(-5, 0, -5),
-    Vector3.new(5, 0, -5), Vector3.new(-5, 0, 5),
-    Vector3.new(8, 0, 3), Vector3.new(-8, 0, 3),
-    Vector3.new(3, 0, 8), Vector3.new(3, 0, -8),
-    Vector3.new(7, 0, 7), Vector3.new(-7, 0, 7),
-    Vector3.new(7, 0, -7), Vector3.new(-7, 0, -7),
-}
-local ENEMY_OFFSETS_FAR = {
-    Vector3.new(5, 0, 0), Vector3.new(-5, 0, 0),
-    Vector3.new(0, 0, 5), Vector3.new(0, 0, -5),
-    Vector3.new(8, 0, 0), Vector3.new(0, 0, 8),
-}
-local BASE_OFFSETS = {
-    Vector3.new(4, 0, 4), Vector3.new(-4, 0, 4),
-    Vector3.new(4, 0, -4), Vector3.new(-4, 0, -4),
-}
-local HRP_OFFSETS = {
-    Vector3.new(5, 0, 0), Vector3.new(-5, 0, 0),
-    Vector3.new(0, 0, 5), Vector3.new(0, 0, -5),
-    Vector3.new(8, 0, 8), Vector3.new(-8, 0, -8),
-}
+local getCachedUnitUtils = Core.getCachedUnitUtils
+local getCachedInformation = Core.getCachedInformation
+local peek = Core.peek
 
 ------------------------------------------------------------------------
 -- Boost FPS (ลบเอฟเฟกต์ + พื้น Plastic ต่ำสุด — ไม่ lock FPS)
@@ -253,25 +214,9 @@ end
 ------------------------------------------------------------------------
 -- Helpers
 ------------------------------------------------------------------------
-local function waitPeek(value, timeout, pred)
-    local t0 = os.clock()
-    timeout = timeout or 30
-    while os.clock() - t0 < timeout do
-        local v = peek(value)
-        if pred then
-            if pred(v) then
-                return v
-            end
-        elseif v ~= nil then
-            return v
-        end
-        task.wait(0.1)
-    end
-    return peek(value)
-end
+local waitPeek = Core.waitPeek
 
-
-
+Utils.peek = peek
 Utils.getCachedUnitUtils = getCachedUnitUtils
 Utils.getCachedInformation = getCachedInformation
 Utils.waitPeek = waitPeek

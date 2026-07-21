@@ -3,7 +3,11 @@
 -- ]]
 
 local StarterUnit = {}
+local Core = _G.AEKaitun_Loader and _G.AEKaitun_Loader.require("src/Core.lua") or loadstring(readfile("expidition/src/Core.lua"))()
 local Replicas = _G.AEKaitun_Loader and _G.AEKaitun_Loader.require("src/Replicas.lua") or loadstring(readfile("expidition/src/Replicas.lua"))()
+
+local Nodes = Core.Nodes
+local getPlayerData = Replicas.getPlayerData
 
 local function hasAnyUnit()
     local data = getPlayerData()

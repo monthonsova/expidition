@@ -3,8 +3,31 @@
 -- ]]
 
 local Summon = {}
+local Core = _G.AEKaitun_Loader and _G.AEKaitun_Loader.require("src/Core.lua") or loadstring(readfile("expidition/src/Core.lua"))()
 local Replicas = _G.AEKaitun_Loader and _G.AEKaitun_Loader.require("src/Replicas.lua") or loadstring(readfile("expidition/src/Replicas.lua"))()
 local Utils = _G.AEKaitun_Loader and _G.AEKaitun_Loader.require("src/Utils.lua") or loadstring(readfile("expidition/src/Utils.lua"))()
+local AutoFarmManager = _G.AEKaitun_Loader and _G.AEKaitun_Loader.require("src/AutoFarmManager.lua") or loadstring(readfile("expidition/src/AutoFarmManager.lua"))()
+
+local Nodes = Core.Nodes
+local Dependencies = Core.Dependencies
+local peek = Core.peek
+
+local getCachedInformation = Utils.getCachedInformation
+
+local isInGame = Replicas.isInGame
+local getPlayerData = Replicas.getPlayerData
+local getAccountLevel = Replicas.getAccountLevel
+
+local getAutoFarm = AutoFarmManager.getAutoFarm
+
+local fastSummonEnabled = false
+
+-- Team.lua ก็ require Summon.lua (ใช้ getSummonTeamUnitsInBag) — ห้าม require Team.lua
+-- ตอนโหลดโมดูล (top-level) เพราะจะเกิด circular require ค้าง ต้องดึงแบบ lazy ตอนเรียกใช้จริงเท่านั้น
+local function getTeamModule()
+    return _G.AEKaitun_Loader and _G.AEKaitun_Loader.require("src/Team.lua")
+        or loadstring(readfile("expidition/src/Team.lua"))()
+end
 
 local function enableFastSummonAlways()
     if fastSummonEnabled then
@@ -296,9 +319,6 @@ local function getBannerMythicNames(banner)
     return names
 end
 
--- UI: Gem / Mythic bag / Trait / ชื่อ Mythic ในแบนเนอร์
-local statsUiBuilt = false
-
 local function getBagUnitsByRarities(rarities)
     local want = {}
     for _, r in ipairs(rarities or {}) do
@@ -457,9 +477,10 @@ local function autoSummonAfterCodes()
     local lvl = getAccountLevel()
     if already >= stopAt then
         print("[AE Kaitun] มี Legendary คนละตัวแล้ว", already, "/", stopAt, "(Lv", lvl, ") — ข้ามสุ่ม")
-        equipLegendariesToHotbar()
+        local Team = getTeamModule()
+        Team.equipLegendariesToHotbar()
         if #(_G.Settings["Units"] or {}) > 0 then
-            fillEmptyHotbarWithLegendaries()
+            Team.fillEmptyHotbarWithLegendaries()
         end
         return
     end
@@ -510,10 +531,11 @@ local function autoSummonAfterCodes()
 
     closeSummonUiNow()
     task.wait(0.5)
-    equipLegendariesToHotbar()
+    local Team = getTeamModule()
+    Team.equipLegendariesToHotbar()
     -- มี Units ใน Settings → เติมช่องว่างด้วย Mythic ก่อน แล้ว Legendary
     if #(_G.Settings["Units"] or {}) > 0 then
-        fillEmptyHotbarWithLegendaries()
+        Team.fillEmptyHotbarWithLegendaries()
     end
 end
 

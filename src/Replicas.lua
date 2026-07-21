@@ -3,7 +3,13 @@
 -- ]]
 
 local Replicas = {}
-local Utils = _G.AEKaitun_Loader and _G.AEKaitun_Loader.require("src/Utils.lua") or loadstring(readfile("expidition/src/Utils.lua"))()
+local Core = _G.AEKaitun_Loader and _G.AEKaitun_Loader.require("src/Core.lua") or loadstring(readfile("expidition/src/Core.lua"))()
+
+local Nodes = Core.Nodes
+local Dependencies = Core.Dependencies
+local Shared = Core.Shared
+local peek = Core.peek
+local waitPeek = Core.waitPeek
 
 local function isInGame()
     return peek(Shared.IsInGame) == true
@@ -77,9 +83,6 @@ local function getGamePlayerReplica()
     end
     return nil
 end
-
-local lastPlaceAt = 0
-
 
 Replicas.isInGame = isInGame
 Replicas.getPlayerData = getPlayerData

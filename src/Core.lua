@@ -1,0 +1,214 @@
+-- [[
+--     AE Kaitun — Core Bootstrap Module
+--     รวมของที่ทุกโมดูลต้องใช้ร่วมกัน (Services / Nodes / Dependencies / Shared /
+--     Actions / ReplicaClient / peek / waitPeek / cached UnitUtils-Information)
+--     ทุกโมดูลควร require ไฟล์นี้ไฟล์เดียว แล้วดึงเฉพาะของที่ใช้เป็น local ของตัวเอง
+--     ห้ามพึ่งพา global เปล่าๆ ข้ามไฟล์ — เป็นสาเหตุบัค "attempt to index/call nil" ที่พบก่อนแก้
+-- ]]
+
+local Core = {}
+
+local Services = {
+    Players = game:GetService("Players"),
+    ReplicatedStorage = game:GetService("ReplicatedStorage"),
+    Workspace = game:GetService("Workspace"),
+    Lighting = game:GetService("Lighting"),
+    CollectionService = game:GetService("CollectionService"),
+}
+
+local LocalPlayer = Services.Players.LocalPlayer
+if not LocalPlayer then
+    -- กันสคริปต์รันก่อน LocalPlayer พร้อม (rare race ตอนเพิ่งรัน script)
+    local t0 = os.clock()
+    while not LocalPlayer and os.clock() - t0 < 10 do
+        task.wait(0.1)
+        LocalPlayer = Services.Players.LocalPlayer
+    end
+end
+
+local ReplicatedStorage = Services.ReplicatedStorage
+local Workspace = Services.Workspace
+
+------------------------------------------------------------------------
+-- Best-effort resolve helper
+------------------------------------------------------------------------
+local function tryEach(candidates)
+    for _, getter in ipairs(candidates) do
+        local ok, result = pcall(getter)
+        if ok and result ~= nil then
+            return result
+        end
+    end
+    return nil
+end
+
+-- โครงสร้างจริงของเกม (ยืนยันจาก decompile .rbxlx):
+--   ReplicatedStorage.Nodes         (ModuleScript — ต้อง require ถึงจะได้ตาราง Node ที่มี :FireServer/:Request/:InvokeSelf/:Connect)
+--   ReplicatedStorage.Shared        (Folder — เก็บ Utils/Information/UnitUtils/ReplicaClient/Maid ให้ require เป็นรายตัว)
+--   ReplicatedStorage.FusionPackage (Folder — เก็บ Fusion/Dependencies/Actions/State/Components)
+-- ไม่มี ReplicatedStorage.Replica ในเกมจริง — ของเดิมเดายึด path ผิด ทำให้ Dependencies/Actions เป็น nil ทั้งหมด
+local NodesModule = ReplicatedStorage:WaitForChild("Nodes", 15)
+local Shared = ReplicatedStorage:FindFirstChild("Shared") or ReplicatedStorage:WaitForChild("Shared", 15)
+local FusionPackage = ReplicatedStorage:FindFirstChild("FusionPackage") or ReplicatedStorage:WaitForChild("FusionPackage", 15)
+local Terrain = Workspace:FindFirstChildOfClass("Terrain") or Workspace:FindFirstChild("Terrain")
+
+local Nodes = tryEach({
+    function() return require(NodesModule) end,
+})
+if not Nodes then
+    warn("[AE Kaitun] Core: require(ReplicatedStorage.Nodes) ล้มเหลว — ฟังก์ชันยิง remote จะใช้ไม่ได้")
+end
+
+local Dependencies = tryEach({
+    function() return require(FusionPackage:WaitForChild("Dependencies", 10)) end,
+    function() return require(ReplicatedStorage:WaitForChild("Dependencies", 3)) end,
+    function() return _G.Dependencies end,
+})
+if not Dependencies then
+    warn("[AE Kaitun] Core: ไม่พบ FusionPackage.Dependencies — ฟังก์ชันอ่าน state (Hotbar/PlayerData/GameUnits ฯลฯ) จะใช้ไม่ได้")
+end
+
+local Actions = tryEach({
+    function() return require(FusionPackage:WaitForChild("Actions", 10)) end,
+    function() return require(Shared:WaitForChild("Actions", 3)) end,
+    function() return require(ReplicatedStorage:WaitForChild("Actions", 3)) end,
+    function() return _G.Actions end,
+})
+if not Actions then
+    warn("[AE Kaitun] Core: ไม่พบโมดูล Actions (จะใช้ fallback ที่เขียนไว้แทนทุกจุด)")
+end
+
+local ReplicaClient = tryEach({
+    function() return require(Shared:WaitForChild("ReplicaClient", 10)) end,
+    function() return require(ReplicatedStorage:WaitForChild("ReplicaClient", 3)) end,
+    function() return require(ReplicatedStorage:WaitForChild("ReplicaController", 3)) end,
+    function() return _G.ReplicaClient end,
+})
+if not ReplicaClient then
+    warn("[AE Kaitun] Core: ไม่พบโมดูล ReplicaClient (Shared.ReplicaClient) — บาง auto-accept flow อาจไม่ทำงาน")
+end
+
+-- Fusion ตัวจริงของเกม (ReplicatedStorage.FusionPackage.Fusion) — ใช้ peek จริงแทนของเดา
+-- เพราะ peek จริงรองรับ Value/Computed/ForPairs ฯลฯ ครบกว่า heuristic ที่เขียนเอง
+local RealFusion = tryEach({
+    function() return require(FusionPackage:WaitForChild("Fusion", 10)) end,
+})
+local realPeek = RealFusion and typeof(RealFusion.peek) == "function" and RealFusion.peek or nil
+if not realPeek then
+    warn("[AE Kaitun] Core: ไม่พบ FusionPackage.Fusion.peek — ใช้ peek สำรอง (heuristic) แทน")
+end
+
+------------------------------------------------------------------------
+-- peek / waitPeek — อ่านค่า state object (Fusion-style / value container)
+-- ใช้ Fusion.peek จริงของเกมเป็นหลัก (รองรับ Value/Computed/ForPairs/ForKeys/ForValues
+-- ครบตาม Fusion API) แล้ว fallback เป็น heuristic เขียนเองถ้า Fusion จริงใช้ไม่ได้
+------------------------------------------------------------------------
+local function heuristicPeek(inst)
+    if inst == nil then
+        return nil
+    end
+    local t = typeof(inst)
+    if t ~= "Instance" and t ~= "table" then
+        return inst
+    end
+    if t == "Instance" then
+        local val = inst:FindFirstChild("Value")
+        if val then
+            return val.Value
+        end
+        local ok, prop = pcall(function()
+            return inst.Value
+        end)
+        if ok then
+            return prop
+        end
+        return nil
+    end
+    if typeof(inst.get) == "function" then
+        local ok, v = pcall(inst.get, inst)
+        if ok then
+            return v
+        end
+    end
+    if typeof(inst.Get) == "function" then
+        local ok, v = pcall(inst.Get, inst)
+        if ok then
+            return v
+        end
+    end
+    return inst
+end
+
+local function peek(inst)
+    if inst == nil then
+        return nil
+    end
+    if realPeek then
+        local ok, v = pcall(realPeek, inst)
+        if ok then
+            return v
+        end
+    end
+    return heuristicPeek(inst)
+end
+
+local function waitPeek(value, timeout, pred)
+    local t0 = os.clock()
+    timeout = timeout or 30
+    while os.clock() - t0 < timeout do
+        local v = peek(value)
+        if pred then
+            if pred(v) then
+                return v
+            end
+        elseif v ~= nil then
+            return v
+        end
+        task.wait(0.1)
+    end
+    return peek(value)
+end
+
+------------------------------------------------------------------------
+-- Cached module requires (UnitUtils / Information) — โหลดครั้งเดียวใช้ทุกไฟล์
+------------------------------------------------------------------------
+local cachedUnitUtils = nil
+local function getCachedUnitUtils()
+    if not cachedUnitUtils then
+        pcall(function()
+            cachedUnitUtils = require(Shared:WaitForChild("UnitUtils"))
+        end)
+    end
+    return cachedUnitUtils
+end
+
+local cachedInformation = nil
+local function getCachedInformation()
+    if not cachedInformation then
+        pcall(function()
+            cachedInformation = require(Shared:WaitForChild("Information"))
+        end)
+    end
+    return cachedInformation
+end
+
+Core.Services = Services
+Core.LocalPlayer = LocalPlayer
+Core.ReplicatedStorage = ReplicatedStorage
+Core.Workspace = Workspace
+Core.Lighting = Services.Lighting
+Core.Terrain = Terrain
+Core.CollectionService = Services.CollectionService
+Core.Nodes = Nodes
+Core.Dependencies = Dependencies
+Core.Shared = Shared
+Core.FusionPackage = FusionPackage
+Core.Fusion = RealFusion
+Core.Actions = Actions
+Core.ReplicaClient = ReplicaClient
+Core.peek = peek
+Core.waitPeek = waitPeek
+Core.getCachedUnitUtils = getCachedUnitUtils
+Core.getCachedInformation = getCachedInformation
+
+return Core

@@ -1,12 +1,34 @@
 -- [[
---     AE Kaitun — Main Farm Loop Orchestrator
+--     AE Kaitun — Main Farm Loop Orchestrator (Optimized for 24/7 AFK)
 -- ]]
 
 local FarmLoop = {}
+
 local Replicas = _G.AEKaitun_Loader and _G.AEKaitun_Loader.require("src/Replicas.lua") or loadstring(readfile("expidition/src/Replicas.lua"))()
 local AutoFarmManager = _G.AEKaitun_Loader and _G.AEKaitun_Loader.require("src/AutoFarmManager.lua") or loadstring(readfile("expidition/src/AutoFarmManager.lua"))()
 local Lobby = _G.AEKaitun_Loader and _G.AEKaitun_Loader.require("src/Lobby.lua") or loadstring(readfile("expidition/src/Lobby.lua"))()
 local InGame = _G.AEKaitun_Loader and _G.AEKaitun_Loader.require("src/InGame.lua") or loadstring(readfile("expidition/src/InGame.lua"))()
+
+local isInGame = Replicas.isInGame
+local getAccountLevel = Replicas.getAccountLevel
+local getAutoFarm = AutoFarmManager.getAutoFarm
+local getGrindStage = AutoFarmManager.getGrindStage
+local getActiveStoryMap = AutoFarmManager.getActiveStoryMap
+local refreshFarmTargetForLevel = AutoFarmManager.refreshFarmTargetForLevel
+local buildStoryStageList = AutoFarmManager.buildStoryStageList
+local isInGrindMode = AutoFarmManager.isInGrindMode
+local syncFarmStateFromProgress = AutoFarmManager.syncFarmStateFromProgress
+local applyFarmStageToSettings = AutoFarmManager.applyFarmStageToSettings
+local getCurrentFarmStage = AutoFarmManager.getCurrentFarmStage
+local markFarmEnteredMatch = AutoFarmManager.markFarmEnteredMatch
+local consumeFarmMatchReturn = AutoFarmManager.consumeFarmMatchReturn
+local getFarmState = AutoFarmManager.getFarmState
+local getStoryMaps = AutoFarmManager.getStoryMaps
+local getStoryActs = AutoFarmManager.getStoryActs
+local getStoryDifficulties = AutoFarmManager.getStoryDifficulties
+local tryEnterGrindAfterMapClear = AutoFarmManager.tryEnterGrindAfterMapClear
+local startGame = Lobby.startGame
+local runInGame = InGame.runInGame
 
 local function waitUntilInGame(timeout)
     timeout = timeout or 90
@@ -21,9 +43,8 @@ local function waitUntilInGame(timeout)
 end
 
 local function waitUntilBackToLobby(timeout)
-    timeout = timeout or 1800 -- แมตช์ยาวได้
+    timeout = timeout or 1800
     local t0 = os.clock()
-    -- รอให้เข้าเกมก่อน แล้วค่อยรอกลับ lobby
     while os.clock() - t0 < 120 and not isInGame() do
         task.wait(0.5)
     end
@@ -48,7 +69,6 @@ local function runStoryFarmLoop()
         return
     end
 
-    -- ถ้าเพิ่งเทเลพอร์ตกลับจากแมตช์ / หรือเริ่มใหม่ → sync จาก CompletedMaps
     if not isInGame() then
         if not consumeFarmMatchReturn() then
             print("[AE Kaitun] Farm All Story เสร็จแล้ว")
@@ -87,7 +107,6 @@ local function runStoryFarmLoop()
             print("[AE Kaitun] Farm All Story ครบลิสต์แล้ว")
             break
         end
-        -- grind วนไม่จำกัดรอบ (กัน runaway ตอน debug ด้วยเพดานสูง)
         if isInGrindMode() and safety > 9999 then
             warn("[AE Kaitun] Grind หยุดที่เพดานรอบ — รีสตาร์ทสคริปต์เพื่อวนต่อ")
             break
@@ -160,8 +179,6 @@ local function runStoryFarmLoop()
         task.wait(1.5)
     end
 end
-
-
 
 FarmLoop.waitUntilInGame = waitUntilInGame
 FarmLoop.waitUntilBackToLobby = waitUntilBackToLobby

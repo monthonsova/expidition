@@ -4,7 +4,15 @@
 
 local AutoFarmManager = {}
 
+local Core = _G.AEKaitun_Loader and _G.AEKaitun_Loader.require("src/Core.lua") or loadstring(readfile("expidition/src/Core.lua"))()
 local Replicas = _G.AEKaitun_Loader and _G.AEKaitun_Loader.require("src/Replicas.lua") or loadstring(readfile("expidition/src/Replicas.lua"))()
+
+local Nodes = Core.Nodes
+local Dependencies = Core.Dependencies
+local Actions = Core.Actions
+local peek = Core.peek
+
+local getAccountLevel = Replicas.getAccountLevel
 
 local function getFarmState()
     local g = getgenv()

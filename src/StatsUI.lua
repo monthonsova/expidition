@@ -3,9 +3,16 @@
 -- ]]
 
 local StatsUI = {}
-local Replicas = _G.AEKaitun_Loader and _G.AEKaitun_Loader.require("src/Replicas.lua") or loadstring(readfile("expidition/src/Replicas.lua"))()
+local Core = _G.AEKaitun_Loader and _G.AEKaitun_Loader.require("src/Core.lua") or loadstring(readfile("expidition/src/Core.lua"))()
 local Summon = _G.AEKaitun_Loader and _G.AEKaitun_Loader.require("src/Summon.lua") or loadstring(readfile("expidition/src/Summon.lua"))()
-local AutoFarmManager = _G.AEKaitun_Loader and _G.AEKaitun_Loader.require("src/AutoFarmManager.lua") or loadstring(readfile("expidition/src/AutoFarmManager.lua"))()
+
+local LocalPlayer = Core.LocalPlayer
+
+local getItemAmount = Summon.getItemAmount
+local countUnitsByRarity = Summon.countUnitsByRarity
+local getBannerMythicNames = Summon.getBannerMythicNames
+
+local statsUiBuilt = false
 
 local function getStatsSnapshot()
     return {

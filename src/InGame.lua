@@ -3,9 +3,59 @@
 -- ]]
 
 local InGame = {}
+
+local Core = _G.AEKaitun_Loader and _G.AEKaitun_Loader.require("src/Core.lua") or loadstring(readfile("expidition/src/Core.lua"))()
+local Utils = _G.AEKaitun_Loader and _G.AEKaitun_Loader.require("src/Utils.lua") or loadstring(readfile("expidition/src/Utils.lua"))()
 local Replicas = _G.AEKaitun_Loader and _G.AEKaitun_Loader.require("src/Replicas.lua") or loadstring(readfile("expidition/src/Replicas.lua"))()
 local PlacementEngine = _G.AEKaitun_Loader and _G.AEKaitun_Loader.require("src/PlacementEngine.lua") or loadstring(readfile("expidition/src/PlacementEngine.lua"))()
 local AutoFarmManager = _G.AEKaitun_Loader and _G.AEKaitun_Loader.require("src/AutoFarmManager.lua") or loadstring(readfile("expidition/src/AutoFarmManager.lua"))()
+
+local Services = Core.Services
+local LocalPlayer = Core.LocalPlayer
+local Nodes = Core.Nodes
+local Shared = Core.Shared
+local Dependencies = Core.Dependencies
+local peek = Core.peek
+local ReplicaClient = Core.ReplicaClient
+
+local boostFPS = Utils.boostFPS
+
+local isInGame = Replicas.isInGame
+local getGamePlayerReplica = Replicas.getGamePlayerReplica
+
+local getAffordableSlotsOrdered = PlacementEngine.getAffordableSlotsOrdered
+local canPlaceMoreOfAsset = PlacementEngine.canPlaceMoreOfAsset
+local getPlacementLimit = PlacementEngine.getPlacementLimit
+local countOwnPlacedByAsset = PlacementEngine.countOwnPlacedByAsset
+local countOwnPlacedUnits = PlacementEngine.countOwnPlacedUnits
+local getTotalPlacementCap = PlacementEngine.getTotalPlacementCap
+local isAtTotalPlacementCap = PlacementEngine.isAtTotalPlacementCap
+local getSlotAsset = PlacementEngine.getSlotAsset
+local getSlotPlacementCost = PlacementEngine.getSlotPlacementCost
+local canAffordSlot = PlacementEngine.canAffordSlot
+local getHotbarSlots = PlacementEngine.getHotbarSlots
+local isFarmUnit = PlacementEngine.isFarmUnit
+local getEnemyPositions = PlacementEngine.getEnemyPositions
+local getPathEndPositions = PlacementEngine.getPathEndPositions
+local getPathPoints = PlacementEngine.getPathPoints
+local getThreatEnemies = PlacementEngine.getThreatEnemies
+local minDistToPoints = PlacementEngine.minDistToPoints
+local getGameYen = PlacementEngine.getGameYen
+local buildAAStylePlaceCFrames = PlacementEngine.buildAAStylePlaceCFrames
+local canPlaceAt = PlacementEngine.canPlaceAt
+
+local getAutoFarm = AutoFarmManager.getAutoFarm
+local getGrindStage = AutoFarmManager.getGrindStage
+local getFarmState = AutoFarmManager.getFarmState
+local isInGrindMode = AutoFarmManager.isInGrindMode
+local refreshFarmTargetForLevel = AutoFarmManager.refreshFarmTargetForLevel
+local tryEnterGrindAfterMapClear = AutoFarmManager.tryEnterGrindAfterMapClear
+local shouldLockAutoNextForGrind = AutoFarmManager.shouldLockAutoNextForGrind
+local getActiveStoryMap = AutoFarmManager.getActiveStoryMap
+local returnToLobbyFromMatch = AutoFarmManager.returnToLobbyFromMatch
+
+local placeRunning = false
+local lastPlaceAt = 0
 
 local function placeUnit(hotbarSlot, cframe)
     local rep = getGamePlayerReplica()
@@ -237,28 +287,137 @@ local function waitForPlacementReady(timeout)
     return getGamePlayerReplica() ~= nil
 end
 
-local function resolveUnitAsset(unitId)
-    if not unitId then
-        return nil
+local function autoPlaceUnits()
+    if not _G.Settings["Auto Place Units"] then
+        return
     end
-    local pdata = peek(Dependencies.PlayerData)
-    local unitData = pdata and pdata.UnitData
-    if typeof(unitData) ~= "table" then
-        return nil
+    if placeRunning then
+        return
     end
-    local unit = unitData[unitId] or unitData[tostring(unitId)]
-    if typeof(unit) == "table" then
-        return unit.Asset or unit.Name
-    end
-    return nil
-end
+    placeRunning = true
 
-local function getSlotEntry(slot)
-    local hotbar = peek(Dependencies.HotbarState)
-    local slots = hotbar and hotbar.Slots
-    if typeof(slots) ~= "table" then
-        return nil
+    print("[AE Kaitun] เริ่มวาง (Yen + Limit + จุด hard เท่านั้น) — วนจนกว่าครบลิมิต")
+    waitForPlacementReady(6)
+    task.wait(0.2)
 
+    -- ปิด ghost placement ของ UI กันกด Place แล้วขึ้น "cannot place"
+    pcall(function()
+        Shared.SelectedHotbarIndex:set(nil)
+    end)
+
+    local delaySec = math.clamp(tonumber(_G.Settings["Place Delay"]) or 0.85, 0.75, 2.5)
+    local maxPerSlot = tonumber(_G.Settings["Max Place Per Slot"]) or 4
+    local pointCache = {} -- asset -> { hard, t, idx }
+    local skipAsset = {}
+    local everPlaced = false
+    local lastRebuildWarn = 0
+    local failStreak = 0
+
+    local function getPoints(asset, force)
+        local meta = pointCache[asset]
+        local now = os.clock()
+        local enemies = getEnemyPositions()
+        local pathEnds = getPathEndPositions(getPathPoints())
+        local threat = getThreatEnemies(enemies, pathEnds, 4)
+        local nearBase = false
+        if #threat > 0 and #pathEnds > 0 then
+            nearBase = minDistToPoints(threat[1], pathEnds) < 70
+        end
+        -- มอนใกล้ฐาน → cache สั้น; hard ว่าง → ห้าม cache นาน
+        local ttl = nearBase and 0.45 or ((#enemies > 0) and 0.85 or 2.0)
+        local cachedHard = meta and meta.hard or nil
+        if not force and meta and (now - meta.t) < ttl and cachedHard and #cachedHard > 0 then
+            return cachedHard
+        end
+        local _, placed, limit = canPlaceMoreOfAsset(asset)
+        local need = math.max(4, math.min(12, (limit - placed) + 4))
+        local hard = buildAAStylePlaceCFrames(asset, need)
+        pointCache[asset] = {
+            hard = hard or {},
+            t = now,
+            idx = 1,
+        }
+        return pointCache[asset].hard
+    end
+
+    local function nextPlaceCFrame(asset)
+        local hard = getPoints(asset, false)
+        local meta = pointCache[asset]
+        if not hard or #hard == 0 then
+            -- บังคับรีบิลด์ครั้งหนึ่ง
+            hard = getPoints(asset, true)
+            meta = pointCache[asset]
+        end
+        if not hard or #hard == 0 then
+            return nil
+        end
+
+        -- หาจุดที่ยัง IsPlacementAllowed ตอนนี้ — จุดเสียตัดทิ้งเลย
+        local guard = #hard + 2
+        while #hard > 0 and guard > 0 do
+            guard -= 1
+            local i = meta.idx or 1
+            if i < 1 or i > #hard then
+                i = 1
+            end
+            local cf = hard[i]
+            meta.idx = i + 1
+            if cf and canPlaceAt(asset, cf) then
+                return cf
+            end
+            table.remove(hard, i)
+            if meta.idx > i then
+                meta.idx -= 1
+            end
+        end
+        return nil
+    end
+
+    local function dropPoint(asset, cf)
+        local meta = pointCache[asset]
+        if not meta or not meta.hard or not cf then
+            return
+        end
+        for i, p in ipairs(meta.hard) do
+            if p == cf or (p.Position - cf.Position).Magnitude < 0.5 then
+                table.remove(meta.hard, i)
+                break
+            end
+        end
+    end
+
+    local function allAssetsAtLimit(slots)
+        if #slots == 0 then
+            return true
+        end
+        for _, slot in ipairs(slots) do
+            local asset = getSlotAsset(slot)
+            if asset then
+                local placed = countOwnPlacedByAsset(asset)
+                local lim = math.min(maxPerSlot, getPlacementLimit(asset))
+                if placed < lim then
+                    return false
+                end
+            end
+        end
+        return true
+    end
+
+    task.spawn(function()
+        local attempts = 0
+        while isInGame() do
+            attempts += 1
+            if attempts > 300 then
+                attempts = 1
+                skipAsset = {}
+                pointCache = {}
+            end
+
+            pcall(function()
+                Shared.SelectedHotbarIndex:set(nil)
+            end)
+
+            local slots = getAffordableSlotsOrdered()
             local owned = countOwnPlacedUnits()
             local totalCap = getTotalPlacementCap()
             local yenNow, yenSrc = getGameYen()

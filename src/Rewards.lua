@@ -4,6 +4,18 @@
 
 local Rewards = {}
 
+local Core = _G.AEKaitun_Loader and _G.AEKaitun_Loader.require("src/Core.lua") or loadstring(readfile("expidition/src/Core.lua"))()
+local Replicas = _G.AEKaitun_Loader and _G.AEKaitun_Loader.require("src/Replicas.lua") or loadstring(readfile("expidition/src/Replicas.lua"))()
+
+local Nodes = Core.Nodes
+local Dependencies = Core.Dependencies
+local Shared = Core.Shared
+local Actions = Core.Actions
+local peek = Core.peek
+
+local isInGame = Replicas.isInGame
+local getPlayerData = Replicas.getPlayerData
+
 local function getAchievementCategories()
     local list = {
         "Achievement_Collector",
@@ -13,7 +25,7 @@ local function getAchievementCategories()
         "Achievement_Expeditions",
     }
     pcall(function()
-        local folder = ReplicatedStorage.Shared.Information.Quests
+        local folder = Shared.Information.Quests
         local found = {}
         for _, child in ipairs(folder:GetChildren()) do
             if child:IsA("ModuleScript") and string.find(child.Name, "Achievement_", 1, true) == 1 then

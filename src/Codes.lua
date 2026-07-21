@@ -4,6 +4,9 @@
 
 local Codes = {}
 
+local Core = _G.AEKaitun_Loader and _G.AEKaitun_Loader.require("src/Core.lua") or loadstring(readfile("expidition/src/Core.lua"))()
+local Nodes = Core.Nodes
+
 local function redeemCode(code)
     local ok, result = pcall(function()
         local req = Nodes.CLAIM_CODE:Request(code)

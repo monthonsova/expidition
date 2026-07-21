@@ -3,8 +3,19 @@
 -- ]]
 
 local Team = {}
+local Core = _G.AEKaitun_Loader and _G.AEKaitun_Loader.require("src/Core.lua") or loadstring(readfile("expidition/src/Core.lua"))()
 local Replicas = _G.AEKaitun_Loader and _G.AEKaitun_Loader.require("src/Replicas.lua") or loadstring(readfile("expidition/src/Replicas.lua"))()
 local Summon = _G.AEKaitun_Loader and _G.AEKaitun_Loader.require("src/Summon.lua") or loadstring(readfile("expidition/src/Summon.lua"))()
+
+local Nodes = Core.Nodes
+local Dependencies = Core.Dependencies
+local ReplicatedStorage = Core.ReplicatedStorage
+local peek = Core.peek
+
+local getAccountLevel = Replicas.getAccountLevel
+local getPlayerData = Replicas.getPlayerData
+local getEquippedCount = Replicas.getEquippedCount
+local getSummonTeamUnitsInBag = Summon.getSummonTeamUnitsInBag
 
 local function getUnlockedHotbarSlots()
     local open = {}

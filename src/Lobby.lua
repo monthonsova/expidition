@@ -3,8 +3,17 @@
 -- ]]
 
 local Lobby = {}
+local Core = _G.AEKaitun_Loader and _G.AEKaitun_Loader.require("src/Core.lua") or loadstring(readfile("expidition/src/Core.lua"))()
 local Replicas = _G.AEKaitun_Loader and _G.AEKaitun_Loader.require("src/Replicas.lua") or loadstring(readfile("expidition/src/Replicas.lua"))()
 local AutoFarmManager = _G.AEKaitun_Loader and _G.AEKaitun_Loader.require("src/AutoFarmManager.lua") or loadstring(readfile("expidition/src/AutoFarmManager.lua"))()
+local Team = _G.AEKaitun_Loader and _G.AEKaitun_Loader.require("src/Team.lua") or loadstring(readfile("expidition/src/Team.lua"))()
+
+local Nodes = Core.Nodes
+
+local isInGame = Replicas.isInGame
+local getPartyReplica = Replicas.getPartyReplica
+local buildQueueData = AutoFarmManager.buildQueueData
+local ensureTeamReady = Team.ensureTeamReady
 
 local function startViaParty(queueData)
     local party = getPartyReplica(2)
