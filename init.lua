@@ -1,7 +1,5 @@
---[[
-    AE Kaitun — Anime Expeditions Modular Loader
-    PlaceId: 84515722934860
-]]
+-- AE Kaitun - Anime Expeditions Modular Loader
+-- PlaceId: 84515722934860
 
 -- ------------------------------------------------------------------------
 -- Game Validation Protection (Wrong Game Guard for All Gamemodes)
@@ -150,7 +148,7 @@ task.spawn(function()
             end
         end
     else
-        print("[AE Kaitun Modular] Lobby → Starter → Codes → Summon → Claim → ขาย → ฟาร์ม")
+        print("[AE Kaitun Modular] Lobby -> Starter -> Codes -> Summon -> Claim -> ขาย -> ฟาร์ม")
         StarterUnit.chooseStarterUnit()
         Codes.redeemAllCodes()
         Summon.autoSummonAfterCodes()
