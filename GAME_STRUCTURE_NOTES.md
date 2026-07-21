@@ -175,8 +175,15 @@ Clear mode ตั้ง `AutoNext=on` + `AutoRetry=off` → **ชนะไปต
 ### Flow หลังแพ้ติด ≥ FailSoftReset
 1. `InGame` ตั้ง `needSmartPlay=true` → `Lobby`
 2. `FarmLoop` เรียก `SmartPlay.consumeIfNeeded`
-3. `SmartPlay.runRecovery`: ขาย Rare/Epic ถ้า free slots น้อย → สุ่ม 3 รอบ → `Team.remakeBestTeam` (Mythic/Leg เลเวลสูงสุด คนละ Asset) → ฟีดยูนิตในทีม → ลอง evolve ถ้าวัตถุดิบครบ → ใส่ทีมอีกรอบ
+3. `SmartPlay.runRecovery`: ขาย Rare/Epic ถ้า free slots น้อย → สุ่ม 3 รอบ → จัดทีมตาม Team Mode → ฟีดยูนิตในทีม → `evolveTowardSecrets` (Mythic→Secret/Exclusive) → evolve ทั่วไป → ใส่ทีมอีกรอบ
 4. คิวด่านเดิมจาก `CompletedMaps` (ไม่ข้าม)
+
+### 6d-1. Rarity & ทีม Secret
+- ลำดับความหายากจริงในเกม (สูง→ต่ำ): **Secret > Exclusive > Mythic > Legendary > Epic > Rare** (`RARITY_RANK` ใน `Team.lua`/`SmartPlay.lua`)
+- **Secret/Exclusive ได้จาก evolution/event เท่านั้น — ไม่มีในแบนเนอร์สุ่ม** ดังนั้น "ทีม Secret" = สุ่ม Mythic → ฟีดเต็มเลเวล → evolve เป็น Secret
+- `Team Mode = "Secret"` → `Team.ensureSecretTeam` → `buildSecretTeam` (เรียง Secret→Exclusive→Mythic→Legendary; getBestUnitsForTeam เรียงตาม RARITY_RANK อยู่แล้ว)
+- `SmartPlay.evolveTowardSecrets(cfg)`: สแกนยูนิตในทีม + Mythic ในกระเป๋า → หา `Evolutions:GetEvolvedUnit(asset)` ที่ผลลัพธ์เป็น Secret/Exclusive → เช็ควัตถุดิบ (`GetFilteredRecipe`) + เลเวล ≥ min(maxLv,50) → `TRY_EVOLVING_UNIT` (เปิด/ปิดด้วย `["Auto Evolve To Secret"]`)
+- Debug: `AEKaitun.EnsureSecretTeam()`, `AEKaitun.BuildSecretTeam()`, `AEKaitun.EvolveToSecret()`
 
 ### Config
 ```lua
@@ -209,6 +216,34 @@ Debug: `AEKaitun.SmartPlay()`, `AEKaitun.SmartPlayBag()`, `AEKaitun.RemakeBestTe
 Lv1 SchoolGrounds → Lv15 FlowerForest → Lv30 Dressrosa → Lv45 FairyKingForest → Lv60 KingsTomb
 ```
 (MinLevel เป็นเกณฑ์เสริม — ปลดจริงหลักคือ progression ของเกม)
+
+## 6f. Auto Equip — ไอเทมเสริม/อาวุธที่ดีที่สุด → ยูนิตแข็งสุดไล่ทั้งทีม (`src/AutoEquip.lua`)
+
+### ปัญหา: decompile ไม่ระบุ node สำหรับ equip item
+- `PlayerData` มี `.ItemData` (consumable = `{[name]={Amount=n}}`) และ `.EquipmentData` (ยืนยันใน §2) แต่ **ตาราง Nodes ที่ decompile ไว้ (§4) ไม่มี node ชื่อ equip-item** (มีแค่ `UNIT_LOAD_TEAM(idx, withEquipment)` = โหลดทีมพร้อม equipment ที่ save ไว้)
+- แก้ด้วย **auto-discovery ตอนรันจริง** (Nodes เป็น table หลัง require → iterate ได้):
+  - **container**: peek `PlayerData` แล้วหา key แรกที่เป็น table ของ entry ที่มี `.Asset`/`.Name` — ลองตามลำดับ `EquipmentData, RelicData, GearData, AccessoryData, TrinketData, ArtifactData, WeaponData, ...` (ItemData ถูกกรองออกเองเพราะไม่มี `.Asset`)
+  - **node**: สแกน `Nodes` หา key ที่มี `EQUIP` + คำใบ้ item (`ITEM/RELIC/GEAR/ACCESSOR/TRINKET/ARTIFACT/WEAPON/EQUIPMENT/...`) ตัด `UNIT_EQUIP`/`UNIT_UNEQUIP_ALL`/`*LOAD_TEAM` ออก แล้วให้คะแนน `EQUIPMENT>ITEM>RELIC/GEAR>...`
+
+### Flow
+1. rank equipment ในกระเป๋า (rarity → level/enhance → worthiness) ดีสุดก่อน
+2. rank ยูนิตในทีม (rarity → level → worthiness) แข็งสุดก่อน
+3. จ่าย item ดีสุด `ItemsPerUnit` ชิ้น/ยูนิต ไล่จากยูนิตแข็งสุด → ครบทั้งทีม (item ที่ติดถูกตัวอยู่แล้ว = ข้าม)
+4. ยิง `equipNode:FireServer(...)` ตาม `ArgOrder` (`unit_item` default | `item_unit` | `unit_item_slot`)
+
+### ความปลอดภัย
+- ถ้า discover ไม่เจอ node/container → **ไม่ยิง remote มั่ว** แค่ log บอกให้รัน `AEKaitun.DumpEquip()`
+- ยิงเฉพาะ node ที่ชื่อ match equipment เท่านั้น (ไม่แตะ remote อื่น)
+
+### เรียกใช้
+- อัตโนมัติ: `init.lua` (หลัง summon/claim/sell ตอนเข้า lobby) + ท้าย `SmartPlay.runRecovery`
+- Debug/ตั้งค่าเอง: `AEKaitun.DumpEquip()` (พิมพ์ชื่อ node/คีย์/ตัวอย่าง entry จริง), `AEKaitun.AutoEquip()`
+- override ใน Config: `["Auto Equip"] = { EquipNode=..., ContainerKey=..., ArgOrder=..., ItemsPerUnit=... }`
+
+### ยังต้องยืนยัน (ให้ clack รัน `AEKaitun.DumpEquip()` ครั้งเดียวแล้วส่งผลกลับมา hardcode)
+- ชื่อ node equip-item จริง + ลำดับ argument (unit ก่อน item หรือกลับกัน / มี slot index ไหม)
+- คีย์ container จริง (`EquipmentData` หรืออื่น) + ชื่อ field ของ entry (`.ID`, `.EquippedTo`, `.Level`, `.Rarity`)
+- จำนวนช่อง equipment ต่อยูนิต (`ItemsPerUnit`)
 
 ## 7. จุดที่ยังเป็นข้อสังเกต (ความเสี่ยงต่ำ ไม่ได้แก้เพราะมี fallback ครอบอยู่แล้ว)
 

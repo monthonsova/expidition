@@ -575,10 +575,14 @@ local function autoSummonAfterCodes()
     local haveLeg = countUniqueLegendariesInBag()
     local haveMythic = countUniqueMythicsInBag()
     local lvl = getAccountLevel()
-    local teamMode = tostring(_G.Settings["Team Mode"] or "Mythic")
+    -- normalize ผ่าน Team.getTeamMode() → "SmartSecret"→Secret, "Smart"/"Auto"→Mythic (กัน Summon/Team ไม่ตรงกัน)
+    local teamModeModule = getTeamModule()
+    local teamMode = (teamModeModule and teamModeModule.getTeamMode and teamModeModule.getTeamMode())
+        or tostring(_G.Settings["Team Mode"] or "Mythic")
 
+    -- Secret mode ก็สุ่มหา Mythic เหมือนกัน (Secret ได้จาก evolve Mythic เท่านั้น)
     local function shouldStopSummonMythicFirst()
-        if teamMode == "Mythic" and stopMythic > 0 then
+        if (teamMode == "Mythic" or teamMode == "Secret") and stopMythic > 0 then
             return haveMythic >= stopMythic
         end
         return haveLeg >= stopLeg
@@ -589,7 +593,9 @@ local function autoSummonAfterCodes()
             haveMythic, stopMythic, haveLeg, stopLeg, lvl
         ))
         local Team = getTeamModule()
-        if Team.ensureMythicTeam then
+        if Team.ensureTeamReady then
+            Team.ensureTeamReady()
+        elseif Team.ensureMythicTeam then
             Team.ensureMythicTeam()
         else
             Team.equipLegendariesToHotbar()
@@ -656,7 +662,9 @@ local function autoSummonAfterCodes()
     closeSummonUiNow()
     task.wait(0.5)
     local Team = getTeamModule()
-    if Team.ensureMythicTeam then
+    if Team.ensureTeamReady then
+        Team.ensureTeamReady()
+    elseif Team.ensureMythicTeam then
         Team.ensureMythicTeam()
     else
         Team.equipLegendariesToHotbar()

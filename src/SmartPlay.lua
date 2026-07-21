@@ -18,10 +18,11 @@ local isInGame = Replicas.isInGame
 local getPlayerData = Replicas.getPlayerData
 local getFarmState = AutoFarmManager.getFarmState
 
+-- Secret > Exclusive > Mythic > Legendary > Epic > Rare (Secret/Exclusive จาก evolution เท่านั้น)
 local RARITY_RANK = {
+	Secret = 120,
+	Exclusive = 110,
 	Mythic = 100,
-	Exclusive = 95,
-	Secret = 90,
 	Legendary = 70,
 	Epic = 40,
 	Rare = 20,
@@ -356,7 +357,42 @@ local function canAffordEvolveRequirements(unitId, evolvedAsset)
 	return true
 end
 
-local function tryEvolveEquipped(cfg)
+-- รวมยูนิตที่จะลอง evolve: ที่ใส่ทีมอยู่ + (option) Mythic ในกระเป๋า (ทางเดียวที่ได้ Secret)
+local function buildEvolveCandidates(includeBag)
+	local list = {}
+	local seen = {}
+	for _, u in ipairs(getEquippedUnitEntries()) do
+		local key = tostring(u.ID)
+		if not seen[key] then
+			seen[key] = true
+			u.Rarity = Summon.getAssetRarity(u.Asset)
+			u.Equipped = true
+			table.insert(list, u)
+		end
+	end
+	if includeBag then
+		local mythics = (Summon.getMythicUnitsInBag and Summon.getMythicUnitsInBag()) or {}
+		for _, u in ipairs(mythics) do
+			local key = tostring(u.ID)
+			if not seen[key] then
+				seen[key] = true
+				table.insert(list, {
+					ID = u.ID,
+					Asset = u.Asset,
+					Level = tonumber(u.Level) or 1,
+					Worthiness = tonumber(u.Worthiness) or 0,
+					Rarity = u.Rarity or "Mythic",
+					Equipped = false,
+				})
+			end
+		end
+	end
+	return list
+end
+
+-- opts.IncludeBag = สแกน Mythic ในกระเป๋าด้วย | opts.SecretOnly = evolve เฉพาะที่ผลลัพธ์เป็น Secret/Exclusive
+local function runEvolvePass(cfg, opts)
+	opts = opts or {}
 	if not cfg.TryEvolve or isInGame() then
 		return 0
 	end
@@ -366,28 +402,59 @@ local function tryEvolveEquipped(cfg)
 		return 0
 	end
 	local maxLv = getUnitMaxLevel()
-	local units = getEquippedUnitEntries()
-	local evolved = 0
+	local units = buildEvolveCandidates(opts.IncludeBag == true)
 
+	-- หา target + rarity ปลายทางล่วงหน้า → กรอง → เรียง (Secret ก่อน แล้ว level สูงก่อน)
+	local plan = {}
 	for _, unit in ipairs(units) do
 		local target = nil
 		pcall(function()
 			target = info.Evolutions:GetEvolvedUnit(unit.Asset)
 		end)
-		if not target then
-			continue
+		if target then
+			local tr = Summon.getAssetRarity(target)
+			local pass = true
+			if opts.SecretOnly and not (tr == "Secret" or tr == "Exclusive") then
+				pass = false
+			end
+			if pass then
+				table.insert(plan, {
+					unit = unit,
+					target = target,
+					targetRarity = tr,
+					targetRank = RARITY_RANK[tr or ""] or 0,
+				})
+			end
 		end
+	end
+	table.sort(plan, function(a, b)
+		if a.targetRank ~= b.targetRank then
+			return a.targetRank > b.targetRank
+		end
+		return (a.unit.Level or 0) > (b.unit.Level or 0)
+	end)
+
+	local evolved = 0
+	for _, p in ipairs(plan) do
+		if isInGame() then
+			break
+		end
+		local unit = p.unit
 		-- ฟีดเต็มเลเวลก่อน evolve จะสำเร็จง่ายกว่า
 		if unit.Level < math.min(maxLv, 50) then
 			continue
 		end
-		if not canAffordEvolveRequirements(unit.ID, target) then
-			print("[AE Kaitun] SmartPlay evolve", unit.Asset, "→", target, "วัตถุดิบไม่ครบ")
+		if not canAffordEvolveRequirements(unit.ID, p.target) then
+			print(("[AE Kaitun] SmartPlay evolve %s → %s (%s) วัตถุดิบไม่ครบ"):format(
+				tostring(unit.Asset), tostring(p.target), tostring(p.targetRarity)
+			))
 			continue
 		end
-		print("[AE Kaitun] SmartPlay TRY_EVOLVING", unit.Asset, "→", target)
+		print(("[AE Kaitun] SmartPlay TRY_EVOLVING %s → %s (%s)"):format(
+			tostring(unit.Asset), tostring(p.target), tostring(p.targetRarity)
+		))
 		local ok, result = pcall(function()
-			local req = Nodes.TRY_EVOLVING_UNIT:Request(unit.ID, target)
+			local req = Nodes.TRY_EVOLVING_UNIT:Request(unit.ID, p.target)
 			if req and req.Timeout then
 				req:Timeout(6)
 			end
@@ -399,13 +466,25 @@ local function tryEvolveEquipped(cfg)
 		closeUiNoise()
 		if ok and result ~= false then
 			evolved += 1
-			print("[AE Kaitun] SmartPlay evolve สำเร็จ?", unit.Asset, "→", target)
+			print("[AE Kaitun] SmartPlay evolve สำเร็จ?", unit.Asset, "→", p.target)
 		else
 			warn("[AE Kaitun] SmartPlay evolve ไม่ผ่าน", unit.Asset, result)
 		end
 		task.wait(1.0)
 	end
 	return evolved
+end
+
+local function tryEvolveEquipped(cfg)
+	return runEvolvePass(cfg, { IncludeBag = false, SecretOnly = false })
+end
+
+-- Evolve Mythic → Secret/Exclusive (ทั้งในทีมและในกระเป๋า) — ทางเดียวที่ได้ Secret
+local function evolveTowardSecrets(cfg)
+	if _G.Settings["Auto Evolve To Secret"] == false then
+		return 0
+	end
+	return runEvolvePass(cfg, { IncludeBag = true, SecretOnly = true })
 end
 
 local function smartSummonRounds(cfg)
@@ -457,7 +536,14 @@ local function remakeTeam(cfg)
 	if not cfg.RemakeTeam or isInGame() then
 		return false
 	end
-	print("[AE Kaitun] SmartPlay สร้างทีมใหม่ PreferBest=", cfg.PreferBestUnits)
+	local mode = (Team.getTeamMode and Team.getTeamMode()) or "Mythic"
+	print("[AE Kaitun] SmartPlay สร้างทีมใหม่ Mode=", mode, "PreferBest=", cfg.PreferBestUnits)
+	if mode == "Secret" and Team.ensureSecretTeam then
+		return Team.ensureSecretTeam()
+	end
+	if mode == "Best" and Team.remakeBestTeam then
+		return Team.remakeBestTeam()
+	end
 	if Team.ensureMythicTeam then
 		return Team.ensureMythicTeam()
 	end
@@ -496,11 +582,21 @@ local function runRecovery(reason)
 	task.wait(0.6)
 	feedEquippedUnits(cfg)
 	task.wait(0.4)
+	-- Mythic → Secret/Exclusive ก่อน (ทางเดียวที่ได้ Secret) แล้วค่อย evolve ทั่วไป
+	evolveTowardSecrets(cfg)
+	task.wait(0.4)
 	tryEvolveEquipped(cfg)
 	task.wait(0.5)
 
-	-- หลัง evolve อาจได้ตัวใหม่ → ใส่ทีมอีกรอบ
+	-- หลัง evolve อาจได้ Secret/ตัวใหม่ → ใส่ทีมอีกรอบ
 	remakeTeam(cfg)
+	task.wait(0.5)
+	-- ใส่ไอเทม/อาวุธที่ดีที่สุดให้ทีมใหม่
+	pcall(function()
+		local AutoEquip = _G.AEKaitun_Loader and _G.AEKaitun_Loader.require("src/AutoEquip.lua")
+			or loadstring(readfile("expidition/src/AutoEquip.lua"))()
+		AutoEquip.autoEquipBestItems("smartplay")
+	end)
 	print("[AE Kaitun] === SmartPlay เสร็จ — พร้อมคิวใหม่ ===")
 	return true
 end
@@ -529,6 +625,7 @@ SmartPlay.getBagFreeSlots = getBagFreeSlots
 SmartPlay.ensureBagSpace = ensureBagSpace
 SmartPlay.feedEquippedUnits = feedEquippedUnits
 SmartPlay.tryEvolveEquipped = tryEvolveEquipped
+SmartPlay.evolveTowardSecrets = evolveTowardSecrets
 SmartPlay.smartSummonRounds = smartSummonRounds
 SmartPlay.remakeTeam = remakeTeam
 SmartPlay.runRecovery = runRecovery

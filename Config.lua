@@ -46,7 +46,9 @@ local defaultSettings = {
     ["Team Index"] = 1,
     ["Include Equipment"] = true,
 
-    -- Mythic = จัดทีม Mythic อัตโนมัติ (แนะนำ) | Units = ตามลิสต์ | Best = rarity+เลเวลสูงสุด
+    -- Secret = ดันทีม Secret (evolve Mythic→Secret ให้) | Mythic = ทีม Mythic อัตโนมัติ
+    -- Units = ตามลิสต์ | Best = rarity+เลเวลสูงสุด
+    -- ลำดับ rarity จริง: Secret > Exclusive > Mythic > Legendary > Epic > Rare
     ["Team Mode"] = "Mythic",
     ["Smart Mythic Team"] = {
         Enabled = true,
@@ -55,6 +57,35 @@ local defaultSettings = {
         ReplaceWeakUnits = true, -- มี Mythic แล้วถอดตัวอ่อนในลิสต์ Units ออก
         PreferShiny = true,
         PreferHighWorthiness = true,
+    },
+    -- ทีม Secret: Secret/Exclusive ได้จาก evolution เท่านั้น (ไม่มีในแบนเนอร์)
+    ["Smart Secret Team"] = {
+        Enabled = true,
+        FillWithMythic = true,    -- Secret ไม่พอ → เติม Mythic
+        FillWithLegendary = true, -- แล้วค่อย Legendary
+        ReplaceWeakUnits = true,
+        PreferShiny = true,
+        PreferHighWorthiness = true,
+    },
+    -- SmartPlay จะ evolve Mythic → Secret/Exclusive ให้ (ทั้งในทีมและกระเป๋า) ถ้าวัตถุดิบครบ
+    ["Auto Evolve To Secret"] = true,
+
+    -- Auto Equip: ใส่ไอเทมเสริม/อาวุธที่ดีที่สุด → ยูนิตแข็งสุดไล่ทั้งทีม
+    -- เกม decompile ไม่ระบุชื่อ node/คีย์ equipment → โมดูล auto-discover ให้ตอนรัน
+    -- ถ้า discover พลาด รัน AEKaitun.DumpEquip() ในคอนโซลแล้วเอาชื่อจริงมาใส่ override ด้านล่าง
+    ["Auto Equip Items"] = true,
+    ["Auto Equip"] = {
+        Enabled = true,
+        OnlyEquippedUnits = true, -- true = เฉพาะยูนิตในทีม | false = ทั้งกระเป๋า (เรียงแข็งสุดก่อน)
+        ItemsPerUnit = 1,         -- จำนวน equipment ต่อ 1 ยูนิต (ปรับตามช่องของเกม)
+        PreferRarity = true,      -- เรียง item ตาม rarity ก่อน
+        PreferHighLevel = true,   -- rarity เท่ากันดู level/enhance
+        Delay = 0.4,
+        -- override เมื่อ auto-discover ไม่ตรง (ปล่อย nil = auto)
+        EquipNode = nil,          -- ชื่อคีย์ใน Nodes เช่น "UNIT_EQUIP_ITEM"
+        UnequipNode = nil,
+        ContainerKey = nil,       -- คีย์ใน PlayerData เช่น "EquipmentData"
+        ArgOrder = "unit_item",   -- "unit_item" | "item_unit" | "unit_item_slot"
     },
 
     -- ใช้ตอน Team Mode = "Units" หรือเป็น fallback ถ้ายังไม่มี Mythic/Leg
@@ -153,8 +184,6 @@ local defaultSettings = {
     ["Max Farm Place"] = 1,
     ["Place Farm After Combat"] = true,
     ["Min Combat Before Farm"] = 2,
-    ["Auto Sell At Wave"] = true,
-    ["Sell Wave"] = 30,
     ["Auto Skip Waves"] = true,
     ["Auto Upgrade"] = true,
 

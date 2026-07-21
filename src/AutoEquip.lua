@@ -1,0 +1,474 @@
+-- --     AE Kaitun — Auto Equip Module (ไอเทมเสริม/อาวุธที่ดีที่สุด → ยูนิตแข็งสุดไล่ทั้งทีม)
+-- --     เกม decompile ไม่ได้ระบุชื่อ node สำหรับ equip item → โมดูลนี้ auto-discover
+-- --     ชื่อ node + คีย์ container ตอนรันจริง (มี config override + AEKaitun.DumpEquip())
+
+local AutoEquip = {}
+
+local Core = _G.AEKaitun_Loader and _G.AEKaitun_Loader.require("src/Core.lua") or loadstring(readfile("expidition/src/Core.lua"))()
+local Replicas = _G.AEKaitun_Loader and _G.AEKaitun_Loader.require("src/Replicas.lua") or loadstring(readfile("expidition/src/Replicas.lua"))()
+local Summon = _G.AEKaitun_Loader and _G.AEKaitun_Loader.require("src/Summon.lua") or loadstring(readfile("expidition/src/Summon.lua"))()
+
+local Nodes = Core.Nodes
+local Dependencies = Core.Dependencies
+local peek = Core.peek
+
+local isInGame = Replicas.isInGame
+local getPlayerData = Replicas.getPlayerData
+
+-- Team.lua require Summon.lua อยู่แล้ว → ดึงแบบ lazy กัน circular
+local function getTeamModule()
+    return _G.AEKaitun_Loader and _G.AEKaitun_Loader.require("src/Team.lua")
+        or loadstring(readfile("expidition/src/Team.lua"))()
+end
+
+-- Secret > Exclusive > Mythic > Legendary > Epic > Rare
+local RARITY_RANK = {
+    Secret = 120,
+    Exclusive = 110,
+    Mythic = 100,
+    Legendary = 70,
+    Epic = 40,
+    Rare = 20,
+    Common = 10,
+    Basic = 5,
+}
+
+local function getCfg()
+    local cfg = _G.Settings["Auto Equip"]
+    if typeof(cfg) ~= "table" then
+        cfg = {}
+    end
+    return {
+        Enabled = cfg.Enabled ~= false and _G.Settings["Auto Equip Items"] ~= false,
+        OnlyEquippedUnits = cfg.OnlyEquippedUnits ~= false,
+        ItemsPerUnit = math.max(1, tonumber(cfg.ItemsPerUnit) or 1),
+        PreferRarity = cfg.PreferRarity ~= false,
+        PreferHighLevel = cfg.PreferHighLevel ~= false,
+        Delay = math.clamp(tonumber(cfg.Delay) or 0.4, 0.2, 2.0),
+        EquipNode = cfg.EquipNode,       -- string key ใน Nodes (เช่น "UNIT_EQUIP_ITEM")
+        UnequipNode = cfg.UnequipNode,
+        ContainerKey = cfg.ContainerKey, -- เช่น "EquipmentData"
+        ArgOrder = tostring(cfg.ArgOrder or "unit_item"), -- unit_item | item_unit | unit_item_slot
+    }
+end
+
+------------------------------------------------------------------------
+-- Discovery: หา container ของ equipment ใน PlayerData + node สำหรับ equip
+------------------------------------------------------------------------
+local CONTAINER_CANDIDATES = {
+    "EquipmentData", "RelicData", "GearData", "AccessoryData",
+    "TrinketData", "ArtifactData", "WeaponData", "ItemEquipmentData",
+    "CharmData", "AmuletData",
+}
+
+-- entry ที่ "ดูเหมือน equipment": เป็น table + มี Asset/Name (ItemData เป็น {Amount} ไม่มี Asset → ถูกกรองออก)
+local function looksLikeEquipmentContainer(tbl)
+    if typeof(tbl) ~= "table" then
+        return false
+    end
+    local checked, hit = 0, 0
+    for _, e in pairs(tbl) do
+        checked += 1
+        if typeof(e) == "table" and (e.Asset or e.Name) then
+            hit += 1
+        end
+        if checked >= 8 then
+            break
+        end
+    end
+    return checked > 0 and hit > 0
+end
+
+local function findContainer(cfg)
+    local data = peek(Dependencies.PlayerData)
+    if typeof(data) ~= "table" then
+        data = getPlayerData()
+    end
+    if typeof(data) ~= "table" then
+        return nil, nil
+    end
+    -- override ก่อน
+    if cfg.ContainerKey and looksLikeEquipmentContainer(data[cfg.ContainerKey]) then
+        return data[cfg.ContainerKey], cfg.ContainerKey
+    end
+    for _, key in ipairs(CONTAINER_CANDIDATES) do
+        if looksLikeEquipmentContainer(data[key]) then
+            return data[key], key
+        end
+    end
+    return nil, nil
+end
+
+local ITEM_KEYWORDS = { "ITEM", "RELIC", "GEAR", "ACCESSOR", "TRINKET", "ARTIFACT", "WEAPON", "EQUIPMENT", "CHARM", "AMULET" }
+
+local function nameMatchesItem(up)
+    for _, kw in ipairs(ITEM_KEYWORDS) do
+        if up:find(kw, 1, true) then
+            return true
+        end
+    end
+    return false
+end
+
+local function nodeIsFireable(node)
+    return typeof(node) == "table"
+        and (typeof(node.FireServer) == "function"
+            or typeof(node.Request) == "function"
+            or typeof(node.Fire) == "function")
+end
+
+-- คืนลิสต์ชื่อ node ที่ match (equip / unequip) เรียงตามความน่าจะเป็น
+local function scanNodesForEquip()
+    local equipHits, unequipHits = {}, {}
+    if typeof(Nodes) ~= "table" then
+        return equipHits, unequipHits
+    end
+    for name, node in pairs(Nodes) do
+        if typeof(name) == "string" and nodeIsFireable(node) then
+            local up = name:upper()
+            if up == "UNIT_EQUIP" or up == "UNIT_UNEQUIP_ALL" or up:find("LOAD_TEAM", 1, true) then
+                -- ยูนิต→hotbar / โหลดทีม ไม่ใช่ equip item
+            elseif up:find("UNEQUIP", 1, true) and nameMatchesItem(up) then
+                table.insert(unequipHits, name)
+            elseif up:find("EQUIP", 1, true) and nameMatchesItem(up) then
+                table.insert(equipHits, name)
+            end
+        end
+    end
+    -- ให้คะแนน: EQUIPMENT/ITEM มาก่อน แล้ว RELIC/GEAR ฯลฯ
+    local function score(n)
+        local up = n:upper()
+        if up:find("EQUIPMENT", 1, true) then return 5 end
+        if up:find("ITEM", 1, true) then return 4 end
+        if up:find("RELIC", 1, true) or up:find("GEAR", 1, true) then return 3 end
+        return 1
+    end
+    local function sorter(a, b)
+        return score(a) > score(b)
+    end
+    table.sort(equipHits, sorter)
+    table.sort(unequipHits, sorter)
+    return equipHits, unequipHits
+end
+
+local discoverCache = nil
+local function discover(cfg, force)
+    cfg = cfg or getCfg()
+    if discoverCache and not force then
+        return discoverCache
+    end
+    local container, containerKey = findContainer(cfg)
+
+    local equipNode, equipNodeName
+    if cfg.EquipNode and nodeIsFireable(Nodes[cfg.EquipNode]) then
+        equipNode, equipNodeName = Nodes[cfg.EquipNode], cfg.EquipNode
+    end
+    local equipHits, unequipHits = scanNodesForEquip()
+    if not equipNode and equipHits[1] then
+        equipNode, equipNodeName = Nodes[equipHits[1]], equipHits[1]
+    end
+
+    local unequipNode, unequipNodeName
+    if cfg.UnequipNode and nodeIsFireable(Nodes[cfg.UnequipNode]) then
+        unequipNode, unequipNodeName = Nodes[cfg.UnequipNode], cfg.UnequipNode
+    elseif unequipHits[1] then
+        unequipNode, unequipNodeName = Nodes[unequipHits[1]], unequipHits[1]
+    end
+
+    discoverCache = {
+        container = container,
+        containerKey = containerKey,
+        equipNode = equipNode,
+        equipNodeName = equipNodeName,
+        unequipNode = unequipNode,
+        unequipNodeName = unequipNodeName,
+        equipCandidates = equipHits,
+        unequipCandidates = unequipHits,
+    }
+    return discoverCache
+end
+
+------------------------------------------------------------------------
+-- Ranking
+------------------------------------------------------------------------
+local function rarityRank(asset, fallbackRarity)
+    local rarity = Summon.getAssetRarity(asset) or fallbackRarity or "Rare"
+    return RARITY_RANK[rarity] or 10, rarity
+end
+
+-- equipment ในกระเป๋า → เรียง ดีสุดก่อน (rarity → level → worthiness)
+local function getEquipmentItems(container, cfg)
+    local list = {}
+    if typeof(container) ~= "table" then
+        return list
+    end
+    for id, e in pairs(container) do
+        if typeof(e) == "table" then
+            local asset = e.Asset or e.Name
+            if asset then
+                local rank, rarity = rarityRank(asset, e.Rarity)
+                table.insert(list, {
+                    ID = e.ID or e.UUID or id,
+                    Asset = asset,
+                    Level = tonumber(e.Level or e.Enhancement or e.Tier) or 0,
+                    Rarity = rarity,
+                    Rank = rank,
+                    Worthiness = tonumber(e.Worthiness or e.Power or e.Stat or e.Rating) or 0,
+                    EquippedTo = e.EquippedTo or e.UnitID or e.EquippedUnit or e.Unit or e.EquippedToUnit,
+                    Locked = e.Locked == true,
+                })
+            end
+        end
+    end
+    table.sort(list, function(a, b)
+        if cfg.PreferRarity and a.Rank ~= b.Rank then
+            return a.Rank > b.Rank
+        end
+        if cfg.PreferHighLevel and a.Level ~= b.Level then
+            return a.Level > b.Level
+        end
+        if a.Worthiness ~= b.Worthiness then
+            return a.Worthiness > b.Worthiness
+        end
+        return a.Rank > b.Rank
+    end)
+    return list
+end
+
+-- ยูนิตในทีม (หรือทั้งกระเป๋า) → เรียง แข็งสุดก่อน
+local function getTargetUnits(cfg)
+    local data = getPlayerData()
+    local unitData = data and data.UnitData
+    if typeof(unitData) ~= "table" then
+        return {}
+    end
+    local filterSet = nil
+    if cfg.OnlyEquippedUnits then
+        local Team = getTeamModule()
+        filterSet = Team.getEquippedUnitIdSet and Team.getEquippedUnitIdSet() or {}
+    end
+    local list = {}
+    for id, u in pairs(unitData) do
+        if typeof(u) == "table" and u.Asset then
+            if (not filterSet) or filterSet[tostring(id)] then
+                local rank, rarity = rarityRank(u.Asset, u.Rarity)
+                table.insert(list, {
+                    ID = id,
+                    Asset = u.Asset,
+                    Level = tonumber(u.Level) or 1,
+                    Rarity = rarity,
+                    Rank = rank,
+                    Shiny = u.Shiny == true,
+                    Worthiness = tonumber(u.Worthiness) or 0,
+                })
+            end
+        end
+    end
+    table.sort(list, function(a, b)
+        if a.Rank ~= b.Rank then
+            return a.Rank > b.Rank
+        end
+        if a.Level ~= b.Level then
+            return a.Level > b.Level
+        end
+        return a.Worthiness > b.Worthiness
+    end)
+    return list
+end
+
+------------------------------------------------------------------------
+-- Fire
+------------------------------------------------------------------------
+local function fireEquip(node, unitId, itemId, slotIndex, argOrder)
+    local args
+    if argOrder == "item_unit" then
+        args = { itemId, unitId }
+    elseif argOrder == "unit_item_slot" then
+        args = { unitId, itemId, slotIndex }
+    else
+        args = { unitId, itemId }
+    end
+    local ok = pcall(function()
+        if typeof(node.FireServer) == "function" then
+            node:FireServer(table.unpack(args))
+        elseif typeof(node.Request) == "function" then
+            local req = node:Request(table.unpack(args))
+            if req and req.Timeout then
+                req:Timeout(5)
+            end
+        elseif typeof(node.Fire) == "function" then
+            node:Fire(table.unpack(args))
+        end
+    end)
+    return ok
+end
+
+------------------------------------------------------------------------
+-- Main: ใส่ item ดีสุด → unit แข็งสุด ไล่ทั้งทีม
+------------------------------------------------------------------------
+local running = false
+
+local function autoEquipBestItems(reason)
+    local cfg = getCfg()
+    if not cfg.Enabled then
+        return false
+    end
+    if isInGame() then
+        return false
+    end
+    if running then
+        return false
+    end
+    running = true
+
+    local ok, result = pcall(function()
+        local disc = discover(cfg, true)
+
+        if not disc.container then
+            print("[AE Kaitun] AutoEquip: ไม่พบ container equipment ใน PlayerData —",
+                "ตั้ง Auto Equip.ContainerKey หรือรัน AEKaitun.DumpEquip() ดูคีย์จริง")
+            return false
+        end
+        if not disc.equipNode then
+            print("[AE Kaitun] AutoEquip: ไม่พบ node สำหรับ equip item —",
+                "ตั้ง Auto Equip.EquipNode หรือรัน AEKaitun.DumpEquip() ดูชื่อ node จริง")
+            return false
+        end
+
+        local items = getEquipmentItems(disc.container, cfg)
+        if #items == 0 then
+            print("[AE Kaitun] AutoEquip: ไม่มี equipment ในกระเป๋า (container=" .. tostring(disc.containerKey) .. ")")
+            return false
+        end
+        local units = getTargetUnits(cfg)
+        if #units == 0 then
+            print("[AE Kaitun] AutoEquip: ไม่มียูนิตเป้าหมาย (จัดทีมก่อน)")
+            return false
+        end
+
+        print(("[AE Kaitun] === AutoEquip (%s) | node=%s | container=%s | items=%d units=%d ==="):format(
+            tostring(reason or "manual"), tostring(disc.equipNodeName),
+            tostring(disc.containerKey), #items, #units
+        ))
+
+        local perUnit = cfg.ItemsPerUnit
+        local idx = 1
+        local fired = 0
+        for _, unit in ipairs(units) do
+            for slot = 1, perUnit do
+                local item = items[idx]
+                if not item then
+                    break
+                end
+                idx += 1
+                -- ติดถูกตัวอยู่แล้ว → ข้าม (ยังนับว่าใช้ช่องนี้ไป)
+                if tostring(item.EquippedTo or "") == tostring(unit.ID) then
+                    print(("[AE Kaitun] AutoEquip: %s %s ติด %s อยู่แล้ว — ข้าม"):format(
+                        tostring(item.Rarity), tostring(item.Asset), tostring(unit.Asset)
+                    ))
+                else
+                    print(("[AE Kaitun] AutoEquip: %s %s Lv%d → %s %s (slot %d)"):format(
+                        tostring(item.Rarity), tostring(item.Asset), item.Level,
+                        tostring(unit.Rarity), tostring(unit.Asset), slot
+                    ))
+                    if fireEquip(disc.equipNode, unit.ID, item.ID, slot, cfg.ArgOrder) then
+                        fired += 1
+                    end
+                    task.wait(cfg.Delay)
+                end
+            end
+            if not items[idx] then
+                break
+            end
+        end
+
+        print(("[AE Kaitun] === AutoEquip เสร็จ — ยิง equip %d ครั้ง ==="):format(fired))
+        return fired > 0
+    end)
+
+    running = false
+    if not ok then
+        warn("[AE Kaitun] AutoEquip error:", result)
+        return false
+    end
+    return result
+end
+
+------------------------------------------------------------------------
+-- Diagnostic dump — รันครั้งเดียวเพื่อยืนยันชื่อ node/คีย์จริง แล้ว hardcode ได้
+------------------------------------------------------------------------
+local function dump()
+    local cfg = getCfg()
+    local disc = discover(cfg, true)
+    print("========== AE Kaitun AutoEquip DUMP ==========")
+    print("PlayerData equipment container key =", tostring(disc.containerKey))
+    print("equip node (เลือกใช้) =", tostring(disc.equipNodeName))
+    print("unequip node (เลือกใช้) =", tostring(disc.unequipNodeName))
+    print("equip candidates =", table.concat(disc.equipCandidates or {}, ", "))
+    print("unequip candidates =", table.concat(disc.unequipCandidates or {}, ", "))
+
+    -- ลิสต์คีย์ทั้งหมดใน PlayerData (หา container ที่ auto-discover พลาด)
+    local data = peek(Dependencies.PlayerData)
+    if typeof(data) ~= "table" then
+        data = getPlayerData()
+    end
+    if typeof(data) == "table" then
+        local keys = {}
+        for k, v in pairs(data) do
+            table.insert(keys, tostring(k) .. "(" .. typeof(v) .. ")")
+        end
+        table.sort(keys)
+        print("PlayerData keys =", table.concat(keys, ", "))
+    end
+
+    -- ตัวอย่าง entry แรกใน container
+    if typeof(disc.container) == "table" then
+        for id, e in pairs(disc.container) do
+            print("sample equipment id =", tostring(id))
+            if typeof(e) == "table" then
+                local fields = {}
+                for k, v in pairs(e) do
+                    table.insert(fields, tostring(k) .. "=" .. tostring(v))
+                end
+                table.sort(fields)
+                print("  fields:", table.concat(fields, " | "))
+            end
+            break
+        end
+        local items = getEquipmentItems(disc.container, cfg)
+        print("equipment count =", #items)
+        for i = 1, math.min(5, #items) do
+            local it = items[i]
+            print(("  [%d] %s %s Lv%d EquippedTo=%s"):format(
+                i, tostring(it.Rarity), tostring(it.Asset), it.Level, tostring(it.EquippedTo)
+            ))
+        end
+    end
+
+    -- Nodes ทั้งหมดที่มีคำว่า EQUIP/ITEM/RELIC (เผื่อ scan หลัก match ไม่ครบ)
+    if typeof(Nodes) == "table" then
+        local related = {}
+        for name, node in pairs(Nodes) do
+            if typeof(name) == "string" and nodeIsFireable(node) then
+                local up = name:upper()
+                if up:find("EQUIP", 1, true) or up:find("ITEM", 1, true)
+                    or up:find("RELIC", 1, true) or up:find("GEAR", 1, true) then
+                    table.insert(related, name)
+                end
+            end
+        end
+        table.sort(related)
+        print("Nodes ที่เกี่ยวข้อง (EQUIP/ITEM/RELIC/GEAR) =", table.concat(related, ", "))
+    end
+    print("==============================================")
+    return disc
+end
+
+AutoEquip.getCfg = getCfg
+AutoEquip.discover = discover
+AutoEquip.getEquipmentItems = getEquipmentItems
+AutoEquip.getTargetUnits = getTargetUnits
+AutoEquip.autoEquipBestItems = autoEquipBestItems
+AutoEquip.dump = dump
+
+return AutoEquip

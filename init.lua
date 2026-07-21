@@ -112,6 +112,7 @@ local PlacementEngine = Loader.require("src/PlacementEngine.lua")
 local InGame = Loader.require("src/InGame.lua")
 local StatsUI = Loader.require("src/StatsUI.lua")
 local SmartPlay = Loader.require("src/SmartPlay.lua")
+local AutoEquip = Loader.require("src/AutoEquip.lua")
 local FarmLoop = Loader.require("src/FarmLoop.lua")
 
 -- Activate Anti-AFK, Auto-Rejoin, and Queue-On-Teleport Persistence
@@ -154,6 +155,9 @@ task.spawn(function()
         Summon.autoSummonAfterCodes()
         Rewards.claimAllRewards()
         Summon.autoSellBagUnits()
+        pcall(function()
+            AutoEquip.autoEquipBestItems("startup")
+        end)
         FarmLoop.runStoryFarmLoop()
     end
 end)
@@ -171,6 +175,11 @@ getgenv().AEKaitun = {
     EquipLegendaries = Team.equipLegendariesToHotbar,
     EnsureMythicTeam = Team.ensureMythicTeam,
     BuildMythicTeam = Team.buildMythicTeam,
+    EnsureSecretTeam = Team.ensureSecretTeam,
+    BuildSecretTeam = Team.buildSecretTeam,
+    EvolveToSecret = function()
+        return SmartPlay.evolveTowardSecrets(SmartPlay.getSmartCfg())
+    end,
     CountLegendaries = Summon.countLegendariesInBag,
     CountUniqueLegendaries = Summon.countUniqueLegendariesInBag,
     CountUniqueMythics = Summon.countUniqueMythicsInBag,
@@ -223,6 +232,10 @@ getgenv().AEKaitun = {
         return SmartPlay.countUnitBag(), SmartPlay.getUnitBagLimit(), SmartPlay.getBagFreeSlots()
     end,
     RemakeBestTeam = Team.remakeBestTeam,
+    AutoEquip = function()
+        return AutoEquip.autoEquipBestItems("manual")
+    end,
+    DumpEquip = AutoEquip.dump,
     Rejoin = AntiAFK.triggerRejoin,
 }
 

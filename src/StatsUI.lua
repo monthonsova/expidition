@@ -18,6 +18,8 @@ local function getStatsSnapshot()
         mythic = countUnitsByRarity("Mythic"),
         traitReroll = getItemAmount("TraitReroll"),
         legendary = countUnitsByRarity("Legendary"),
+        secret = countUnitsByRarity("Secret"),
+        exclusive = countUnitsByRarity("Exclusive"),
     }
 end
 

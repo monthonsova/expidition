@@ -14,7 +14,6 @@ local getAutoFarm = AutoFarmManager.getAutoFarm
 local getGrindStage = AutoFarmManager.getGrindStage
 local getActiveStoryMap = AutoFarmManager.getActiveStoryMap
 local refreshFarmTargetForLevel = AutoFarmManager.refreshFarmTargetForLevel
-local buildStoryStageList = AutoFarmManager.buildStoryStageList
 local isInGrindMode = AutoFarmManager.isInGrindMode
 local syncFarmStateFromProgress = AutoFarmManager.syncFarmStateFromProgress
 local applyFarmStageToSettings = AutoFarmManager.applyFarmStageToSettings

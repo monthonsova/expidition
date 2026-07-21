@@ -300,10 +300,12 @@ local function equipUnitsFromList()
     return slotIdx > 1
 end
 
+-- ลำดับความหายากจริงในเกม (สูง→ต่ำ): Secret > Exclusive > Mythic > Legendary > Epic > Rare
+-- Secret/Exclusive ได้จาก evolution/event เท่านั้น (ไม่มีในแบนเนอร์สุ่ม)
 local RARITY_RANK = {
+    Secret = 120,
+    Exclusive = 110,
     Mythic = 100,
-    Exclusive = 95,
-    Secret = 90,
     Legendary = 70,
     Epic = 40,
     Rare = 20,
@@ -324,10 +326,28 @@ local function getSmartMythicCfg()
     }
 end
 
+local function getSmartSecretCfg()
+    local cfg = _G.Settings["Smart Secret Team"]
+    if typeof(cfg) ~= "table" then
+        cfg = {}
+    end
+    return {
+        Enabled = cfg.Enabled ~= false,
+        FillWithMythic = cfg.FillWithMythic ~= false,   -- Secret ไม่พอ → เติม Mythic
+        FillWithLegendary = cfg.FillWithLegendary ~= false, -- แล้วค่อย Legendary
+        ReplaceWeakUnits = cfg.ReplaceWeakUnits ~= false,
+        PreferShiny = cfg.PreferShiny ~= false,
+        PreferHighWorthiness = cfg.PreferHighWorthiness ~= false,
+    }
+end
+
 local function getTeamMode()
     local mode = tostring(_G.Settings["Team Mode"] or "Mythic")
     if mode == "Smart" or mode == "Auto" then
         return "Mythic"
+    end
+    if mode == "SmartSecret" then
+        return "Secret"
     end
     return mode
 end
@@ -555,6 +575,78 @@ local function ensureMythicTeam()
     return buildMythicTeam()
 end
 
+-- Smart Secret Team: Secret ก่อน → Exclusive → Mythic → Legendary
+-- Secret/Exclusive ได้จาก evolution เท่านั้น (SmartPlay จะ evolve Mythic→Secret ให้)
+local function buildSecretTeam()
+    local cfg = getSmartSecretCfg()
+    local slots = getUnlockedHotbarSlots()
+    if #slots == 0 then
+        warn("[AE Kaitun] ไม่มีช่อง hotbar — รอเลเวล")
+        return false
+    end
+
+    -- getBestUnitsForTeam เรียงตาม RARITY_RANK อยู่แล้ว → Secret/Exclusive ลอยขึ้นบนสุด
+    local pool = getBestUnitsForTeam(#slots, {
+        AllowLegendary = cfg.FillWithLegendary ~= false,
+    })
+    if #pool == 0 then
+        pool = getBestUnitsForTeam(#slots, { AllowWeak = true })
+    end
+    if #pool == 0 then
+        warn("[AE Kaitun] Secret Team — กระเป๋าว่าง")
+        return false
+    end
+
+    local secretN, exclN, mythicN, legN = 0, 0, 0, 0
+    for _, u in ipairs(pool) do
+        if u.Rarity == "Secret" then
+            secretN += 1
+        elseif u.Rarity == "Exclusive" then
+            exclN += 1
+        elseif u.Rarity == "Mythic" then
+            mythicN += 1
+        elseif u.Rarity == "Legendary" then
+            legN += 1
+        end
+    end
+
+    print(("[AE Kaitun] Smart Secret Team → Secret=%d Exclusive=%d Mythic=%d Legendary=%d / slots=%d"):format(
+        secretN, exclN, mythicN, legN, #slots
+    ))
+    if secretN == 0 then
+        print("[AE Kaitun] ยังไม่มี Secret (ได้จาก evolve เท่านั้น) — ใช้ Mythic/Leg ไปก่อน, SmartPlay จะพยายาม evolve")
+    end
+    unequipAll()
+    task.wait(0.4)
+
+    local n = math.min(#pool, #slots)
+    for i = 1, n do
+        local unit = pool[i]
+        local slot = slots[i]
+        print(("[AE Kaitun] SecretTeam Equip %s %s Lv%d%s → slot %s"):format(
+            unit.Rarity, unit.Asset, unit.Level,
+            unit.Shiny and " ★" or "", tostring(slot)
+        ))
+        pcall(function()
+            Nodes.UNIT_EQUIP:FireServer(unit.ID, tostring(slot))
+        end)
+        task.wait(0.35)
+    end
+
+    task.wait(0.45)
+    local equipped = getEquippedCount()
+    print("[AE Kaitun] Smart Secret Team equipped:", equipped)
+    return equipped > 0
+end
+
+local function ensureSecretTeam()
+    local cfg = getSmartSecretCfg()
+    if cfg.Enabled == false then
+        return remakeBestTeam()
+    end
+    return buildSecretTeam()
+end
+
 local function ensureTeamReady()
     local mode = getTeamMode()
     local unitsList = _G.Settings["Units"] or {}
@@ -563,14 +655,22 @@ local function ensureTeamReady()
 
     print("[AE Kaitun] Team Mode =", mode)
 
-    -- โหมด Mythic / Best → ไม่ยึดลิสต์ Units (ยกเว้นยังไม่มี Mythic/Leg เลย)
-    if mode == "Mythic" or mode == "Best" then
+    -- โหมด Secret / Mythic / Best → ไม่ยึดลิสต์ Units (ยกเว้นยังไม่มี strong เลย)
+    if mode == "Secret" or mode == "Mythic" or mode == "Best" then
         local mythics = Summon.getMythicUnitsInBag and Summon.getMythicUnitsInBag() or {}
         local legs = Summon.getLegendaryUnitsInBag and Summon.getLegendaryUnitsInBag() or {}
         local hasStrong = #mythics > 0 or #legs > 0
+        local replaceWeak = cfg.ReplaceWeakUnits ~= false
+        if mode == "Secret" then
+            replaceWeak = getSmartSecretCfg().ReplaceWeakUnits ~= false
+        end
 
-        if hasStrong or cfg.ReplaceWeakUnits ~= false then
-            if mode == "Mythic" then
+        if hasStrong or replaceWeak then
+            if mode == "Secret" then
+                if ensureSecretTeam() then
+                    return true
+                end
+            elseif mode == "Mythic" then
                 if ensureMythicTeam() then
                     return true
                 end
@@ -673,6 +773,9 @@ Team.getBestUnitsForTeam = getBestUnitsForTeam
 Team.remakeBestTeam = remakeBestTeam
 Team.buildMythicTeam = buildMythicTeam
 Team.ensureMythicTeam = ensureMythicTeam
+Team.buildSecretTeam = buildSecretTeam
+Team.ensureSecretTeam = ensureSecretTeam
+Team.getSmartSecretCfg = getSmartSecretCfg
 Team.getTeamMode = getTeamMode
 Team.ensureTeamReady = ensureTeamReady
 
