@@ -4,16 +4,25 @@
 ]]
 
 -- ------------------------------------------------------------------------
--- Game Validation Protection (Wrong Game Guard)
+-- Game Validation Protection (Wrong Game Guard for All Gamemodes)
 -- ------------------------------------------------------------------------
 local ANIME_EXPEDITIONS_LOBBY_ID = 84515722934860
 
 local function isAnimeExpeditionsGame()
+    -- 1. Lobby PlaceId check
     if game.PlaceId == ANIME_EXPEDITIONS_LOBBY_ID then
         return true
     end
+    -- 2. Check ReplicatedStorage structure (Story / Challenge / Event / Raid / Infinite)
     local replicatedStorage = game:GetService("ReplicatedStorage")
-    if replicatedStorage:FindFirstChild("Nodes") and replicatedStorage:FindFirstChild("Replica") then
+    if replicatedStorage:FindFirstChild("Nodes")
+       or replicatedStorage:FindFirstChild("Replica")
+       or replicatedStorage:FindFirstChild("Information")
+       or replicatedStorage:FindFirstChild("UnitUtils") then
+        return true
+    end
+    -- 3. Check workspace markers in match
+    if workspace:FindFirstChild("GroundPlacement") or workspace:FindFirstChild("HillPlacement") or workspace:FindFirstChild("Map") then
         return true
     end
     return false
