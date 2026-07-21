@@ -356,55 +356,16 @@ local function isFarmUnit(asset)
     return farm
 end
 
--- ตรวจว่ายูนิตเป็น AoE (ตีโดนหลายตัว) จาก HitboxType/AttackType/จำนวนเป้า/รัศมีสแปลช
-local AOE_HITBOX_WORDS = {
-    circle = true, cone = true, line = true, full = true, area = true,
-    aoe = true, splash = true, explosion = true, radius = true, sphere = true,
-    box = true, rectangle = true, ["nearest_aoe"] = true, wave = true, beam = true,
-}
-local function statsIsAoe(stats)
-    if typeof(stats) ~= "table" then
-        return false
-    end
-    -- 1) HitboxType / AttackType / Hitbox — ชื่อทรงที่ไม่ใช่ single/target เดี่ยว
-    local hbRaw = stats.HitboxType or stats.Hitbox or stats.AttackType or stats.DamageType
-    if typeof(hbRaw) == "string" then
-        local hb = hbRaw:lower()
-        if hb:find("single") or hb:find("nearest") and not hb:find("aoe") then
-            -- single-target ชัดเจน
-        else
-            for word in pairs(AOE_HITBOX_WORDS) do
-                if hb:find(word, 1, true) then
-                    return true
-                end
-            end
-        end
-    end
-    -- 2) จำนวนเป้าหมายต่อการโจมตี > 1
-    local maxT = tonumber(stats.MaxTargets or stats.MaxHits or stats.TargetCount
-        or stats.Targets or stats.HitCount or stats.MaxEnemies)
-    if maxT and maxT > 1 then
-        return true
-    end
-    -- 3) มีรัศมีสแปลช/AoE
-    local splash = tonumber(stats.SplashRange or stats.AoeRange or stats.AOERange
-        or stats.ExplosionRadius or stats.SplashRadius or stats.HitboxSize)
-    if splash and splash > 0 then
-        return true
-    end
-    return false
-end
-
--- สถิติต่อสู้ของยูนิต (Damage/Range/DPS/AoE) — ใช้เลือกตัววาง + ให้คะแนนจุดตามระยะยิง
+-- สถิติต่อสู้ของยูนิต (Damage/Range/DPS) — ใช้จัดลำดับตัวแรง (Team + เฟสดาเมจ)
 local combatStatsCache = {}
 local function getUnitCombatStats(asset)
     if not asset or asset == "" then
-        return { damage = 0, range = 0, spa = 1, dps = 0, farm = false, aoe = false, effDps = 0 }
+        return { damage = 0, range = 0, spa = 1, dps = 0, farm = false }
     end
     if combatStatsCache[asset] ~= nil then
         return combatStatsCache[asset]
     end
-    local out = { damage = 0, range = 0, spa = 1, dps = 0, farm = isFarmUnit(asset), aoe = false, effDps = 0 }
+    local out = { damage = 0, range = 0, spa = 1, dps = 0, farm = isFarmUnit(asset) }
     pcall(function()
         local UnitUtils = getCachedUnitUtils()
         local stats = UnitUtils:GetUpgradeStats(asset, 0)
@@ -417,17 +378,94 @@ local function getUnitCombatStats(asset)
                 out.spa = spa
             end
             out.dps = out.damage / out.spa
-            out.aoe = statsIsAoe(stats)
         end
     end)
     -- range เริ่มต้นถ้าเกมไม่คืน (กันหารศูนย์/คะแนนเพี้ยน)
     if out.range <= 0 then
         out.range = 30
     end
-    -- effDps: AoE โดนหลายตัว = คุ้มกว่า → คูณโบนัสตอนจัดลำดับวาง
-    out.effDps = out.aoe and (out.dps * 2.0) or out.dps
     combatStatsCache[asset] = out
     return out
+end
+
+-- ตรวจว่ายูนิตเป็นสาย Magical (เวท) — อ่าน type/element จาก stats + asset info
+-- field ชื่อไม่ชัวร์ในเกม → probe หลายชื่อ + เช็คคำว่า "magic" (ใช้ AEKaitun.DumpUnitType ดู field จริงได้)
+local magicalCache = {}
+local MAGIC_TYPE_FIELDS = {
+    "DamageType", "AttackType", "Type", "Element", "Class", "UnitType",
+    "Style", "Category", "Attribute", "AttackElement", "SkillType",
+}
+local function valueIsMagical(v)
+    if typeof(v) == "string" then
+        return v:lower():find("magic", 1, true) ~= nil
+    end
+    return false
+end
+local function isMagicalUnit(asset)
+    if not asset or asset == "" then
+        return false
+    end
+    if magicalCache[asset] ~= nil then
+        return magicalCache[asset]
+    end
+    local magical = false
+    pcall(function()
+        local UnitUtils = getCachedUnitUtils()
+        local stats = UnitUtils:GetUpgradeStats(asset, 0)
+        if typeof(stats) == "table" then
+            for _, f in ipairs(MAGIC_TYPE_FIELDS) do
+                if valueIsMagical(stats[f]) then
+                    magical = true
+                    return
+                end
+            end
+        end
+    end)
+    if not magical then
+        pcall(function()
+            local Information = getCachedInformation()
+            local info = Information:GetAsset(asset)
+            if typeof(info) == "table" then
+                for _, f in ipairs(MAGIC_TYPE_FIELDS) do
+                    if valueIsMagical(info[f]) then
+                        magical = true
+                        return
+                    end
+                end
+            end
+        end)
+    end
+    magicalCache[asset] = magical
+    return magical
+end
+
+-- debug: ดู field type/element จริงของยูนิต (ไว้เทียบว่า Magical เก็บที่ field ไหน)
+local function dumpUnitType(asset)
+    local lines = { "[AE Kaitun] UnitType dump: " .. tostring(asset) }
+    pcall(function()
+        local UnitUtils = getCachedUnitUtils()
+        local stats = UnitUtils:GetUpgradeStats(asset, 0)
+        if typeof(stats) == "table" then
+            for _, f in ipairs(MAGIC_TYPE_FIELDS) do
+                if stats[f] ~= nil then
+                    table.insert(lines, ("  stats.%s = %s"):format(f, tostring(stats[f])))
+                end
+            end
+        end
+    end)
+    pcall(function()
+        local Information = getCachedInformation()
+        local info = Information:GetAsset(asset)
+        if typeof(info) == "table" then
+            for _, f in ipairs(MAGIC_TYPE_FIELDS) do
+                if info[f] ~= nil then
+                    table.insert(lines, ("  info.%s = %s"):format(f, tostring(info[f])))
+                end
+            end
+        end
+    end)
+    table.insert(lines, "  → isMagical = " .. tostring(isMagicalUnit(asset)))
+    print(table.concat(lines, "\n"))
 end
 
 local function getAffordableSlotsOrdered()
@@ -486,21 +524,6 @@ local function getPlaceableParts(asset)
     return CollectionService:GetTagged("HillPlacement"), "Hill"
 end
 
--- แทรกจุดกลางระหว่าง waypoint ให้ถี่ ~6 stud (กัน coverage/dist เพี้ยนตอน waypoint ห่าง)
-local PATH_DENSIFY_STEP = 6
-local function appendDensified(points, a, b)
-    table.insert(points, a)
-    local seg = (b - a)
-    local len = seg.Magnitude
-    if len > PATH_DENSIFY_STEP then
-        local n = math.floor(len / PATH_DENSIFY_STEP)
-        local dir = seg / len
-        for i = 1, n do
-            table.insert(points, a + dir * (PATH_DENSIFY_STEP * i))
-        end
-    end
-end
-
 local function getPathPoints()
     local points = {}
     local mapState = peek(Dependencies.MapState)
@@ -508,20 +531,11 @@ local function getPathPoints()
     if typeof(paths) == "table" then
         for _, path in pairs(paths) do
             if typeof(path) == "table" then
-                -- รวบ waypoint ของ path นี้ตามลำดับก่อน แล้วค่อยแทรกจุดกลาง
-                local wps = {}
                 for _, pt in ipairs(path) do
                     if typeof(pt) == "Vector3" then
-                        table.insert(wps, pt)
+                        table.insert(points, pt)
                     elseif typeof(pt) == "CFrame" then
-                        table.insert(wps, pt.Position)
-                    end
-                end
-                for i = 1, #wps do
-                    if i < #wps then
-                        appendDensified(points, wps[i], wps[i + 1])
-                    else
-                        table.insert(points, wps[i])
+                        table.insert(points, pt.Position)
                     end
                 end
             end
@@ -846,95 +860,15 @@ local function getThreatEnemies(enemies, pathEnds, maxN)
     return out
 end
 
--- นับจำนวน "ช่วงทาง" ที่อยู่ในระยะยิงของยูนิต ณ ตำแหน่งนี้ (ยิ่งมาก = ยิงโดนมอนนานขึ้น = โหดขึ้น)
-local function pathCoverageCount(pos, pathPoints, range)
-    if not range or range <= 0 or typeof(pathPoints) ~= "table" then
-        return 0
-    end
-    local c = 0
-    for _, p in ipairs(pathPoints) do
-        if distFlat(pos, p) <= range then
-            c += 1
-        end
-    end
-    return c
-end
-
--- chokepoint: จุดบนทางที่มี "ช่วงทางอื่นรอบตัวเยอะสุด" (ทางโค้ง/วน/รวมเลน = มอนเดินผ่านนานสุด)
--- = จุดที่วางยูนิตแล้วคุ้มที่สุด → ใช้เป็นศูนย์กลางกองยูนิตทั้งทีม
-local ANCHOR_COVER_RADIUS = 26
-local function computeTeamAnchor(pathPoints)
-    if typeof(pathPoints) ~= "table" or #pathPoints == 0 then
-        return nil
-    end
-    -- cache ต่อแมพ (key = จำนวนจุด + จุดแรก) กันคำนวณซ้ำทุกเฟรม
-    local key = tostring(#pathPoints) .. "|" .. tostring(pathPoints[1])
-    local cached = getgenv()._AE_TEAM_ANCHOR
-    if cached and cached.key == key and cached.pos then
-        return cached.pos
-    end
-    local bestPos, bestScore = nil, -1
-    local n = #pathPoints
-    -- จำกัด candidate ที่ทดสอบ ~200 จุด (แต่ยังนับ coverage เทียบทุกจุด) กัน path ยาวมากช้า
-    local candStep = math.max(1, math.floor(n / 200))
-    for i = 1, n, candStep do
-        local cp = pathPoints[i]
-        local cov = 0
-        for j = 1, n do
-            if distFlat(cp, pathPoints[j]) <= ANCHOR_COVER_RADIUS then
-                cov += 1
-            end
-        end
-        -- bias เบาๆ ไปต้น-กลางทาง: ยิงมอนได้นานกว่าวางท้ายทาง (ไม่ให้ไปกองสุดทาง)
-        local frac = i / n
-        local posBias = (frac <= 0.6) and 1.0 or (1.0 - (frac - 0.6) * 0.8)
-        local score = cov * posBias
-        if score > bestScore then
-            bestScore = score
-            bestPos = cp
-        end
-    end
-    getgenv()._AE_TEAM_ANCHOR = { key = key, pos = bestPos }
-    return bestPos
-end
-
--- ยิ่งใกล้ = คะแนนยิ่งดี (เลขน้อยกว่า)
+-- ยิ่งใกล้ = คะแนนยิ่งดี (เลขน้อยกว่า) — strategy แบบ Kaitun.lua (กระจายตามทาง+ใกล้มอน)
 -- น้ำหนัก: มอนใกล้ฐาน > ใกล้มอนทั่วไป > ใกล้ปลายทาง > ใกล้ทาง
--- opts.range → ให้โบนัสจุดที่คลุม path ในระยะยิงได้มาก (smart placement)
--- opts.anchor → ดึงจุดวางให้กองรอบ anchor เดียวกัน (cluster)
-local function scorePlacePosition(pos, enemies, pathPoints, pathEnds, threatEnemies, opts)
-    opts = opts or {}
+local function scorePlacePosition(pos, enemies, pathPoints, pathEnds, threatEnemies)
     local nearEnemy = _G.Settings["Place Near Enemies"] ~= false
     local nearPath = _G.Settings["Place Near Path"] ~= false
     local eDist = (#enemies > 0) and minDistToPoints(pos, enemies) or 9999
     local tDist = (threatEnemies and #threatEnemies > 0) and minDistToPoints(pos, threatEnemies) or eDist
     local pDist = (#pathPoints > 0) and distToNearestPath(pos, pathPoints) or 9999
     local endDist = (pathEnds and #pathEnds > 0) and minDistToPoints(pos, pathEnds) or 9999
-
-    -- โบนัส/โทษ coverage: จุดที่ยูนิตยิงคลุมทางได้มาก = ดี / ยิงไม่โดนทางเลย = วางดัก (โทษหนัก)
-    -- coverBonus ทำให้คะแนนน้อยลง (ดีขึ้น), noCoverPenalty ทำให้คะแนนมากขึ้น (แย่ลง)
-    local coverBonus = 0
-    local noCoverPenalty = 0
-    if opts.range and opts.range > 0 and #pathPoints > 0 then
-        local cov = pathCoverageCount(pos, pathPoints, opts.range)
-        local w = opts.coverWeight or 8
-        if opts.aoe then
-            -- AoE: ยิ่งคลุมทางมาก ยิ่งโดนมอนหลายตัว → โบนัสแรงกว่า
-            w = w * 1.8
-        end
-        coverBonus = cov * w
-        if cov <= 0 then
-            -- ยูนิตนี้ยิง "ไม่ถึงทางเดินมอนเลย" = วางดักเสียเปล่า → โทษหนักให้ไปอยู่ท้ายสุด
-            noCoverPenalty = 1e5
-        end
-    end
-
-    -- cluster: ยิ่งไกล anchor คะแนนยิ่งแย่ → กองยูนิตรอบ chokepoint เดียวกัน (ไม่กระจายสุดทาง)
-    local clusterPenalty = 0
-    if opts.anchor then
-        local dAnchor = distFlat(pos, opts.anchor)
-        clusterPenalty = dAnchor * (opts.clusterWeight or 40)
-    end
 
     local score = 0
     if nearEnemy and #enemies > 0 then
@@ -947,15 +881,13 @@ local function scorePlacePosition(pos, enemies, pathPoints, pathEnds, threatEnem
             score += endDist * 0.35
         end
         score += pDist * 0.8
-        return score - coverBonus + noCoverPenalty + clusterPenalty
+        return score
     end
     if nearPath and #pathPoints > 0 then
-        -- ไม่มีมอน: คลุม path มากสุด + กองรอบ anchor (ไม่กระจายไปสุดทาง)
-        -- ลดน้ำหนัก endDist ลงเยอะเมื่อมี anchor เพราะ anchor คุมตำแหน่งอยู่แล้ว
-        local endW = opts.anchor and 0.5 or 3
-        return endDist * endW + pDist * 2 + eDist - coverBonus + noCoverPenalty + clusterPenalty
+        -- ไม่มีมอน: กันฐานก่อน (ปลายทาง) แล้วค่อยกระจายตามทาง
+        return endDist * 3 + pDist * 2 + eDist
     end
-    return tDist + eDist + endDist + pDist - coverBonus + noCoverPenalty + clusterPenalty
+    return tDist + eDist + endDist + pDist
 end
 
 local function unwrapNumber(v)
@@ -1100,44 +1032,6 @@ local function buildAAStylePlaceCFrames(asset, count)
     local halfY = size.Y / 2
     local seeds = {}
 
-    -- smart placement: ให้คะแนนจุดที่คลุม path ในระยะยิงได้มากสุด (ยกเว้นตัวฟาร์ม)
-    local smartCfg = _G.Settings["Smart Placement"]
-    local smartOn = (typeof(smartCfg) ~= "table") or smartCfg.Enabled ~= false
-    local useCover = smartOn and ((typeof(smartCfg) ~= "table") or smartCfg.RangeCoverage ~= false)
-    local coverWeight = (typeof(smartCfg) == "table" and tonumber(smartCfg.CoverWeight)) or 8
-    local stats = getUnitCombatStats(asset)
-
-    -- cluster: หา chokepoint จุดเดียว แล้วกองยูนิตทั้งทีมรอบนั้น (แก้ปัญหาวางกระจายสุดทาง)
-    local clusterOn = smartOn and ((typeof(smartCfg) ~= "table") or smartCfg.Cluster ~= false)
-    local clusterRadius = (typeof(smartCfg) == "table" and tonumber(smartCfg.ClusterRadius)) or 18
-    local clusterWeight = (typeof(smartCfg) == "table" and tonumber(smartCfg.ClusterWeight)) or 40
-    local anchor = (clusterOn and not stats.farm) and computeTeamAnchor(pathPoints) or nil
-
-    local scoreOpts = nil
-    if (useCover or anchor) and not stats.farm then
-        scoreOpts = {
-            range = useCover and stats.range or nil,
-            coverWeight = coverWeight,
-            aoe = stats.aoe,
-            anchor = anchor,
-            clusterWeight = clusterWeight,
-        }
-    end
-
-    -- 0) กริดหนาแน่นรอบ anchor (chokepoint) — จุดวางหลักตอน cluster เปิด กองยูนิตชิดกัน
-    if anchor then
-        local ring = { 3, 5, 7, 9, 11, 13, 15 }
-        for _, r in ipairs(ring) do
-            if r <= clusterRadius then
-                for deg = 0, 315, 45 do
-                    local rad = math.rad(deg)
-                    table.insert(seeds, anchor + Vector3.new(math.cos(rad) * r, 0, math.sin(rad) * r))
-                end
-            end
-        end
-        table.insert(seeds, anchor)
-    end
-
     -- 1) มอนใกล้ฐานก่อน (threat)
     for i = 1, #threat do
         local ep = threat[i]
@@ -1234,7 +1128,7 @@ local function buildAAStylePlaceCFrames(asset, count)
             if canPlaceAt(asset, cf) then
                 table.insert(candidates, {
                     cf = cf,
-                    score = scorePlacePosition(ground, enemies, pathPoints, pathEnds, threat, scoreOpts),
+                    score = scorePlacePosition(ground, enemies, pathPoints, pathEnds, threat),
                 })
             end
         end
@@ -1245,8 +1139,7 @@ local function buildAAStylePlaceCFrames(asset, count)
     end)
 
     local hard = {}
-    -- cluster เปิด → ให้วางชิดกันได้มากขึ้น (กองแน่น) / ปิด → เว้นระยะเดิม
-    local minSep = anchor and 3.0 or 4.0
+    local minSep = 4.0
     local function farEnough(list, pos)
         for _, cf in ipairs(list) do
             if (cf.Position - pos).Magnitude < minSep then
@@ -1318,12 +1211,10 @@ local function buildAAStylePlaceCFrames(asset, count)
     local now = os.clock()
     if (getgenv()[key] or 0) + 6 < now then
         getgenv()[key] = now
-        local best = hard[1] and scorePlacePosition(hard[1].Position, enemies, pathPoints, pathEnds, threat, scoreOpts) or -1
+        local best = hard[1] and scorePlacePosition(hard[1].Position, enemies, pathPoints, pathEnds, threat) or -1
         local threatToBase = (#threat > 0 and #pathEnds > 0) and minDistToPoints(threat[1], pathEnds) or -1
         print("[AE Kaitun] points hard=", #hard, "| snap=", snapOk, "| seeds=", #seeds,
-            "| enemies=", #enemies, "| threat=", #threat,
-            "| anchor=", anchor and string.format("(%.0f,%.0f)", anchor.X, anchor.Z) or "off",
-            "| asset=", asset, "aoe=", stats.aoe, "range=", string.format("%.0f", stats.range),
+            "| enemies=", #enemies, "| threat=", #threat, "| asset=", asset,
             "| threat→base~=", typeof(threatToBase) == "number" and string.format("%.1f", threatToBase) or threatToBase,
             "| bestScore~=", typeof(best) == "number" and string.format("%.1f", best) or best,
             "| grounds=", typeof(parts) == "table" and #parts or 0)
@@ -1457,12 +1348,13 @@ PlacementEngine.getSlotPlacementCost = getSlotPlacementCost
 PlacementEngine.canAffordSlot = canAffordSlot
 PlacementEngine.getHotbarSlots = getHotbarSlots
 PlacementEngine.isFarmUnit = isFarmUnit
+PlacementEngine.isMagicalUnit = isMagicalUnit
+PlacementEngine.dumpUnitType = dumpUnitType
 PlacementEngine.getUnitCombatStats = getUnitCombatStats
 PlacementEngine.getEnemyPositions = getEnemyPositions
 PlacementEngine.getPathEndPositions = getPathEndPositions
 PlacementEngine.getPathPoints = getPathPoints
 PlacementEngine.getThreatEnemies = getThreatEnemies
-PlacementEngine.computeTeamAnchor = computeTeamAnchor
 PlacementEngine.minDistToPoints = minDistToPoints
 PlacementEngine.getGameYen = getGameYen
 

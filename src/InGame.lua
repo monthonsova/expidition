@@ -41,6 +41,7 @@ local getGameYen = PlacementEngine.getGameYen
 local buildAAStylePlaceCFrames = PlacementEngine.buildAAStylePlaceCFrames
 local canPlaceAt = PlacementEngine.canPlaceAt
 local getUnitCombatStats = PlacementEngine.getUnitCombatStats
+local isMagicalUnit = PlacementEngine.isMagicalUnit
 
 local getAutoFarm = AutoFarmManager.getAutoFarm
 local getGrindStage = AutoFarmManager.getGrindStage
@@ -559,28 +560,28 @@ local function autoPlaceUnits()
                     return getSlotPlacementCost(a) < getSlotPlacementCost(b)
                 end)
             elseif phase == 3 and carryFirst then
-                -- เฟสดาเมจ: AoE ก่อน (โดนหลายตัว) → แล้ว DPS สูงสุด → ฟาร์มไปท้าย
-                local aoeFirst = _G.Settings["Place AoE First"] ~= false
+                -- เฟสดาเมจ (strategy Kaitun.lua): ฟาร์มไปท้าย → เน้นวาง Magical ก่อน → ถูกสุดก่อน
+                local magicalFirst = _G.Settings["Place Magical First"] ~= false
                 table.sort(slots, function(a, b)
                     local aa, ba = getSlotAsset(a), getSlotAsset(b)
-                    local sa = getUnitCombatStats(aa)
-                    local sb = getUnitCombatStats(ba)
-                    local af = sa.farm and 1 or 0
-                    local bf = sb.farm and 1 or 0
+                    local af = isFarmUnit(aa) and 1 or 0
+                    local bf = isFarmUnit(ba) and 1 or 0
                     if af ~= bf then
                         return af < bf
                     end
-                    -- AoE ลงก่อน single-target
-                    if aoeFirst then
-                        local aAoe = sa.aoe and 1 or 0
-                        local bAoe = sb.aoe and 1 or 0
-                        if aAoe ~= bAoe then
-                            return aAoe > bAoe
+                    -- เน้นเลือกวาง Magical ก่อน
+                    if magicalFirst then
+                        local am = isMagicalUnit(aa) and 1 or 0
+                        local bm = isMagicalUnit(ba) and 1 or 0
+                        if am ~= bm then
+                            return am > bm
                         end
                     end
-                    -- effDps = dps ที่บวกโบนัส AoE แล้ว
-                    if sa.effDps ~= sb.effDps then
-                        return sa.effDps > sb.effDps
+                    -- ตัวแรงกว่า (DPS) ก่อน แล้วค่อยถูกสุด
+                    local ad = getUnitCombatStats(aa).dps
+                    local bd = getUnitCombatStats(ba).dps
+                    if ad ~= bd then
+                        return ad > bd
                     end
                     return getSlotPlacementCost(a) < getSlotPlacementCost(b)
                 end)

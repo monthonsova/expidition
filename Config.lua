@@ -196,8 +196,8 @@ local defaultSettings = {
     ["Place Delay"] = 0.85,
     ["Place Near Path"] = true,
     ["Place Near Enemies"] = true,
-    -- วางตัว AoE (ตีโดนหลายตัว) ก่อน single-target ในเฟสดาเมจ = เคลียร์เวฟดีกว่า
-    ["Place AoE First"] = true,
+    -- เน้นเลือกวางยูนิตสาย Magical (เวท) ก่อนในเฟสดาเมจ
+    ["Place Magical First"] = true,
     ["Max Place Per Slot"] = 4,
     ["Max Farm Place"] = 1,
     ["Place Farm After Combat"] = true,
@@ -213,17 +213,10 @@ local defaultSettings = {
     ["Feed Team Below Level"] = 10, -- feed เฉพาะตัวที่ Level ต่ำกว่านี้ (สูงกว่า=ข้าม กันเปลืองอาหาร)
     ["Feed Team Food Per Unit"] = 100, -- อาหารต่อตัวต่อรอบ (มากกว่า SmartPlay recovery เพราะดัน carry)
 
-    -- Smart Placement: วางแบบดูระยะยิง + วางตัว DPS สูงสุดก่อน
+    -- Placement strategy แบบ Kaitun.lua (กระจายตามทาง+ใกล้มอน) + เน้นวาง Magical ก่อน
     ["Smart Placement"] = {
         Enabled = true,
-        RangeCoverage = true, -- ให้คะแนนจุดที่คลุม path ในระยะยิงยูนิตได้มากสุด (ยิงโดนนาน = โหด)
-        CarryFirst = true,    -- เฟสดาเมจ วาง AoE ก่อน แล้ว DPS สูงสุด (ลงสนาม+อัปเกรดไว)
-        CoverWeight = 8,      -- น้ำหนักโบนัส coverage (สูง = เน้นคลุม path มากกว่าเข้าใกล้มอน)
-        -- จุดที่ยูนิตยิง "ไม่ถึงทางเดินมอนเลย" จะถูกโทษหนัก ไม่วางดักเสียเปล่า (บังคับในโค้ด)
-        -- Cluster: กองยูนิตทั้งทีมรอบ chokepoint จุดเดียว (มอนเดินผ่านเยอะสุด) แทนกระจายทั้งแมพ
-        Cluster = true,
-        ClusterRadius = 18,   -- รัศมีกองรอบ anchor (stud) เล็ก=ชิดกันมาก ใหญ่=กระจายกว่า
-        ClusterWeight = 40,   -- น้ำหนักดึงจุดวางเข้าหา anchor (สูง=กองแน่น)
+        CarryFirst = true,    -- เฟสดาเมจ: จัดลำดับวาง (Magical ก่อน → DPS สูง → ถูกสุด)
     },
 
     -- UI & Rewards

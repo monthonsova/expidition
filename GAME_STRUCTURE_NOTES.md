@@ -248,20 +248,20 @@ Lv1 SchoolGrounds → Lv15 FlowerForest → Lv30 Dressrosa → Lv45 FairyKingFor
 - คีย์ container จริง (`EquipmentData` หรืออื่น) + ชื่อ field ของ entry (`.ID`, `.EquippedTo`, `.Level`, `.Rarity`)
 - จำนวนช่อง equipment ต่อยูนิต (`ItemsPerUnit`)
 
-## 6g. Smart Placement — วางยูนิตแบบใช้กลยุทธ์ (`PlacementEngine.lua` + `InGame.lua`)
+## 6g. Placement strategy (`PlacementEngine.lua` + `InGame.lua`)
 
-เดิมวางตามระยะ (ใกล้ threat/มอน/ปลายทาง/ทาง) + เรียงช่องตามราคา (ถูกก่อน) — ดีเรื่องตำแหน่ง แต่ **ไม่ดูระยะยิงยูนิต** และ **ไม่เลือกวางตัวแรงก่อน**
+ใช้ strategy แบบ `Kaitun.lua` (ต้นฉบับ): `scorePlacePosition` วางตามระยะ — ใกล้ threat (มอนใกล้ฐาน) > ใกล้มอนทั่วไป > ปลายทาง (กันฐาน) > ตามทาง ; เรียงช่องด้วย `getAffordableSlotsOrdered` (ฟาร์มไปท้าย → ถูกก่อน) + เฟส econ (สร้างบอดี้ → ฟาร์ม 1 ตัว → ดาเมจ) — **ไม่มี** cluster/anchor/coverage (ตัดออกแล้วเพราะทำให้วางกองผิดจุด/แพ้)
 
-เพิ่ม 2 กลยุทธ์ (เปิด/ปิดที่ `Config["Smart Placement"]`):
-
-1. **Range coverage** (`RangeCoverage`) — `getUnitCombatStats(asset)` อ่าน `UnitUtils:GetUpgradeStats(asset,0)` (Damage/Range/SPA→DPS) แล้ว `scorePlacePosition` ให้โบนัสจุดที่ **คลุมช่วง path ในระยะยิงได้มากสุด** (`pathCoverageCount`) → ยูนิตยิงโดนมอนนานขึ้น = ดาเมจรวมสูงขึ้น (ตัวฟาร์มไม่ใช้ coverage — วางใกล้ฐานเหมือนเดิม)
-2. **Carry first** (`CarryFirst`) — เฟสดาเมจ (phase 3) เรียงช่องตาม **DPS สูงสุดก่อน** (ไม่ใช่ราคาถูกก่อน) → carry ลงสนาม + โดน AutoUpgrade ไว ; เฟสแรก (phase 1 สร้างบอดี้) / ฟาร์ม ยังคุมด้วยระบบ econ เดิม
+เพิ่มอย่างเดียว: **เน้นเลือกวาง Magical ก่อน**
+- `isMagicalUnit(asset)` — probe `GetUpgradeStats`/`Information:GetAsset` หลาย field (`DamageType/AttackType/Type/Element/Class/...`) เช็คคำว่า `magic`
+- เฟสดาเมจ (phase 3, ต้อง `CarryFirst`) เรียงช่อง: ฟาร์มท้าย → **Magical ก่อน** → DPS สูง → ถูกสุด
+- ถ้า detect Magical ไม่เจอ (field ชื่อแปลก) → `AEKaitun.DumpUnitType("<asset>")` ดู field จริง แล้วเพิ่มใน `MAGIC_TYPE_FIELDS`
 
 Config:
 ```lua
-["Smart Placement"] = { Enabled=true, RangeCoverage=true, CarryFirst=true, CoverWeight=8 }
+["Place Magical First"] = true
+["Smart Placement"] = { Enabled=true, CarryFirst=true }
 ```
-`CoverWeight` สูง = เน้นคลุม path มากกว่าเข้าไปจ่อมอน
 
 ## 7. จุดที่ยังเป็นข้อสังเกต (ความเสี่ยงต่ำ ไม่ได้แก้เพราะมี fallback ครอบอยู่แล้ว)
 
