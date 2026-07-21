@@ -913,14 +913,19 @@ local function getFrontmostEnemy(enemies, pathEnds)
     return threat[1]
 end
 
--- strategy: วางตามจุดที่ศัตรูเดินผ่าน (ชิดเส้นทางที่มอนเดิน) — คะแนน = ระยะถึง path ที่ใกล้สุด (ยิ่งชิดยิ่งดี)
--- ไม่เจาะจงมอนใกล้ฐาน (เลิกวางดักหน้าฐาน) — targeting เป็นตัวเลือกเป้าเอง (Boss/Closest)
+-- strategy: โฟกัสตัวนำหน้าสุด — คะแนน = ระยะถึงตัวที่นำหน้าสุด (ยิ่งชิดยิ่งดี)
+-- ไม่สน cluster/มอนทั้งกลุ่ม — targeting เลือกเป้าเอง (Boss/Closest)
 local function scorePlacePosition(pos, enemies, pathPoints, pathEnds)
+    if typeof(enemies) == "table" and #enemies > 0 then
+        pathEnds = pathEnds or getPathEndPositions(pathPoints or getPathPoints())
+        local front = getFrontmostEnemy(enemies, pathEnds)
+        if front then
+            return (pos - front).Magnitude
+        end
+        return minDistToPoints(pos, enemies)
+    end
     if typeof(pathPoints) == "table" and #pathPoints > 0 then
         return distToNearestPath(pos, pathPoints)
-    end
-    if typeof(enemies) == "table" and #enemies > 0 then
-        return minDistToPoints(pos, enemies)
     end
     return math.huge
 end
@@ -1026,7 +1031,8 @@ end
 -- strategy: สร้างจุดวาง "ตามจุดที่ศัตรูเดินผ่าน" — หว่าน seed รอบมอนทุกตัวที่อยู่ในสนาม
 -- แล้วเลือกจุดที่ชิดเส้นทาง (path) ที่สุด → unit ยืนข้างเลนที่มอนเดินผ่าน (ไม่วางดักหน้าฐาน)
 -- ไม่มีมอน → คืน {} (ไม่วาง จนกว่ามอนจะออกมา)
-local ENEMY_ANCHOR_CAP = 8
+-- strategy: โฟกัส "ตัวนำหน้าสุด" (ใกล้ฐาน/ปลาย path สุด) ตัวเดียว
+-- ไม่สน cluster/มอนทั้งกลุ่ม — หว่าน seed รอบตัวนำหน้าสุดแล้ววางรุมตรงนั้น
 local function buildAAStylePlaceCFrames(asset, count)
     count = math.clamp(count or 8, 1, 14)
     local pathPoints = getPathPoints()
@@ -1037,26 +1043,17 @@ local function buildAAStylePlaceCFrames(asset, count)
     local size = getUnitBoxSize(asset)
     local halfY = size.Y / 2
 
-    -- เลือก anchor = ตำแหน่งมอน (จำกัดจำนวนกันคำนวณเยอะ) — กระจายรอบมอนที่กำลังเดิน
-    local anchors = {}
-    for i = 1, math.min(#enemies, ENEMY_ANCHOR_CAP) do
-        table.insert(anchors, enemies[i])
-    end
+    -- anchor เดียว = ตัวที่นำหน้าสุด (เดินถึงฐานก่อนเพื่อน)
+    local pathEnds = getPathEndPositions(pathPoints)
+    local anchor = getFrontmostEnemy(enemies, pathEnds) or enemies[1]
 
-    -- หว่าน seed รอบแต่ละ anchor
+    -- หว่าน seed รอบตัวนำหน้าสุด (NEAR + FAR ให้จุดพอ เพราะ anchor เดียว)
     local seeds = {}
-    for _, anchor in ipairs(anchors) do
-        for _, off in ipairs(ENEMY_OFFSETS_NEAR) do
-            table.insert(seeds, anchor + off)
-        end
+    for _, off in ipairs(ENEMY_OFFSETS_NEAR) do
+        table.insert(seeds, anchor + off)
     end
-    -- มอนน้อย → ขยายวงด้วย FAR offset กันจุดไม่พอ
-    if #anchors <= 2 then
-        for _, anchor in ipairs(anchors) do
-            for _, off in ipairs(ENEMY_OFFSETS_FAR) do
-                table.insert(seeds, anchor + off)
-            end
-        end
+    for _, off in ipairs(ENEMY_OFFSETS_FAR) do
+        table.insert(seeds, anchor + off)
     end
 
     local candidates = {}
@@ -1072,9 +1069,8 @@ local function buildAAStylePlaceCFrames(asset, count)
             snapOk += 1
             local cf = makePlaceCFrame(ground, halfY)
             if canPlaceAt(asset, cf) then
-                -- ยิ่งชิดเส้นทางที่มอนเดินยิ่งดี (อยู่ในระยะโจมตีเลนที่มอนผ่าน)
-                local score = (#pathPoints > 0) and distToNearestPath(ground, pathPoints)
-                    or minDistToPoints(ground, enemies)
+                -- ยิ่งชิดตัวนำหน้าสุดยิ่งดี (วางรุมตัวที่นำหน้า)
+                local score = (ground - anchor).Magnitude
                 table.insert(candidates, { cf = cf, score = score })
             end
         end
@@ -1109,7 +1105,7 @@ local function buildAAStylePlaceCFrames(asset, count)
     if (getgenv()[key] or 0) + 6 < now then
         getgenv()[key] = now
         print("[AE Kaitun] points hard=", #hard, "| snap=", snapOk, "| seeds=", #seeds,
-            "| enemies=", #enemies, "| anchors=", #anchors, "(วางตามจุดที่มอนเดิน)")
+            "| enemies=", #enemies, "(วางรุมตัวนำหน้าสุด)")
     end
 
     return hard
