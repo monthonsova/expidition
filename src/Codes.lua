@@ -1,0 +1,40 @@
+-- [[
+--     AE Kaitun — Codes Redeemer Module
+-- ]]
+
+local Codes = {}
+
+local function redeemCode(code)
+    local ok, result = pcall(function()
+        local req = Nodes.CLAIM_CODE:Request(code)
+        if req and req.Timeout then
+            req:Timeout(5)
+        end
+        if req and req.Wait then
+            return req:Wait()
+        end
+        return req
+    end)
+    return ok, result
+end
+
+local function redeemAllCodes()
+    if not _G.Settings["Auto Redeem Codes"] then
+        return
+    end
+
+    local list = _G.Settings["Codes"] or {}
+    print("[AE Kaitun] Redeem codes:", #list)
+    for _, code in ipairs(list) do
+        local ok, result = redeemCode(code)
+        print("[AE Kaitun] Code", code, "→", ok and "ok" or "fail", result)
+        task.wait(0.6)
+    end
+end
+
+
+
+Codes.redeemCode = redeemCode
+Codes.redeemAllCodes = redeemAllCodes
+
+return Codes

@@ -1,0 +1,91 @@
+-- [[
+--     AE Kaitun — Replicas & State Module
+-- ]]
+
+local Replicas = {}
+local Utils = _G.AEKaitun_Loader and _G.AEKaitun_Loader.require("src/Utils.lua") or loadstring(readfile("expidition/src/Utils.lua"))()
+
+local function isInGame()
+    return peek(Shared.IsInGame) == true
+end
+
+local function getPlayerData()
+    return waitPeek(Dependencies.PlayerData, 60, function(v)
+        return typeof(v) == "table"
+    end)
+end
+
+local function getEquippedCount()
+    local data = getPlayerData()
+    if not data then
+        return 0
+    end
+    local unitData = data.UnitData or {}
+    local n = 0
+    for _, u in pairs(unitData) do
+        if typeof(u) == "table" and u.Equipped then
+            n += 1
+        end
+    end
+    return n
+end
+
+
+local function getAccountLevel()
+    local lvl = 1
+    pcall(function()
+        local data = peek(Dependencies.PlayerData)
+        if typeof(data) ~= "table" then
+            return
+        end
+        local n = tonumber(data.Level)
+        if not n and data.Level ~= nil then
+            local ok, peeked = pcall(peek, data.Level)
+            if ok then
+                n = tonumber(peeked)
+            end
+        end
+        lvl = n or 1
+    end)
+    return math.max(1, lvl)
+end
+
+-- อ่าน Settings["Auto Farm"] แยก Clear (เคลียร์ด่าน) / Grind (ฟาร์มเรื่อย)
+
+local function getPartyReplica(timeout)
+    timeout = timeout or 10
+    local t0 = os.clock()
+    while os.clock() - t0 < timeout do
+        local ok, party = pcall(function()
+            return Nodes.GET_PARTY_DATA_REPLICA:InvokeSelf()
+        end)
+        if ok and party then
+            return party
+        end
+        task.wait(0.2)
+    end
+    return nil
+end
+
+
+local function getGamePlayerReplica()
+    local ok, rep = pcall(function()
+        return Nodes.GET_GAME_PLAYER_REPLICA:InvokeSelf()
+    end)
+    if ok then
+        return rep
+    end
+    return nil
+end
+
+local lastPlaceAt = 0
+
+
+Replicas.isInGame = isInGame
+Replicas.getPlayerData = getPlayerData
+Replicas.getEquippedCount = getEquippedCount
+Replicas.getAccountLevel = getAccountLevel
+Replicas.getPartyReplica = getPartyReplica
+Replicas.getGamePlayerReplica = getGamePlayerReplica
+
+return Replicas
