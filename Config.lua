@@ -84,8 +84,10 @@ local defaultSettings = {
     ["Auto Evolve To Secret"] = false,
 
     -- Auto Equip: ใส่ไอเทมเสริม/อาวุธที่ดีที่สุด → ยูนิตแข็งสุดไล่ทั้งทีม
-    -- ยืนยันจาก dump: equip ทำผ่าน Fusion Actions.EquipEquipment(unitId, equipmentId)
-    -- (game remotes อยู่หลัง Actions ไม่ใช่ Nodes) container = EquipmentData
+    -- ยืนยันจาก decompile (expidition_lobby.rbxlx:1791706):
+    --   Actions.EquipEquipment(equipmentId, unitId, slotIndex)
+    --   → Nodes.EQUIPMENT_EQUIP:FireServer(equipmentId, unitId, slotIndex)
+    -- container = EquipmentData | UnitData[unitId].Equipment = { ["1"] = equipmentId }
     ["Auto Equip Items"] = true,
     ["Auto Equip"] = {
         Enabled = true,
@@ -95,10 +97,11 @@ local defaultSettings = {
         PreferHighLevel = true,   -- rarity เท่ากันดู level/enhance
         Delay = 0.4,
         -- equip ผ่าน Fusion Actions (หลัก) — ปล่อย nil = auto หา EquipEquipment
-        EquipAction = "EquipEquipment",   -- Actions.EquipEquipment(unitId, equipmentId)
+        EquipAction = "EquipEquipment",   -- Actions.EquipEquipment(equipmentId, unitId, slotIndex)
         UnequipAction = "UnequipEquipment",
         ContainerKey = "EquipmentData",
-        ArgOrder = "unit_item",   -- "unit_item" | "item_unit" | "table"
+        -- item_unit_slot = (equipmentId, unitId, slotIndex) ← ลำดับจริงจาก decompile
+        ArgOrder = "item_unit_slot",   -- "item_unit_slot" | "unit_item" | "item_unit" | "table"
         -- fallback ผ่าน Nodes (ถ้าเกมเปลี่ยนไปใช้ remote — ปกติไม่ใช้)
         EquipNode = nil,
         UnequipNode = nil,
@@ -136,17 +139,17 @@ local defaultSettings = {
             -- MinLevel = เกณฑ์เสริม (ปลดจริงดู CompletedMaps / HasMapUnlocked)
             MapsByLevel = {
                 { MinLevel = 1,  Map = "SchoolGrounds" },
-                { MinLevel = 15, Map = "FlowerForest" },
-                { MinLevel = 30, Map = "Dressrosa" },
-                { MinLevel = 45, Map = "FairyKingForest" },
-                { MinLevel = 60, Map = "KingsTomb" },
+                -- { MinLevel = 15, Map = "FlowerForest" },
+                -- { MinLevel = 30, Map = "Dressrosa" },
+                -- { MinLevel = 45, Map = "FairyKingForest" },
+                -- { MinLevel = 60, Map = "KingsTomb" },
             },
             Maps = {
                 "SchoolGrounds",
-                "FlowerForest",
-                "Dressrosa",
-                "FairyKingForest",
-                "KingsTomb",
+                -- "FlowerForest",
+                -- "Dressrosa",
+                -- "FairyKingForest",
+                -- "KingsTomb",
             },
             Acts = { "Act 1", "Act 2", "Act 3", "Act 4", "Act 5" },
             Difficulties = { "Normal" },
@@ -158,7 +161,7 @@ local defaultSettings = {
             Enabled = true,
             AfterClear = true,
             -- nil = ใช้แมพ Story สุดท้ายที่เคลียร์แล้ว (อย่า hardcode School Act1)
-            Map = nil,
+            Map = "SchoolGrounds",
             Act = "Act 1",
             Difficulty = "Hard",
         },

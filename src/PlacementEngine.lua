@@ -367,6 +367,43 @@ end
 -- ------------------------------------------------------------------------
 -- Magical / Farm detection
 -- ------------------------------------------------------------------------
+-- อ่าน asset info ให้ชัวร์ที่สุด (Archetype อยู่ระดับ top-level ของ unit module ไม่ใช่ใน UpgradeInfo)
+-- ยืนยันจาก decompile: JaceUnit.Archetype="Magical", Information:GetAsset(name)=Information.Assets[name]
+local function getAssetInfo(asset)
+    local info = nil
+    pcall(function()
+        if Dependencies.Information and typeof(Dependencies.Information.GetAsset) == "function" then
+            info = Dependencies.Information:GetAsset(asset)
+        end
+    end)
+    if typeof(info) ~= "table" then
+        pcall(function()
+            local Information = getCachedInformation()
+            if Information and typeof(Information.GetAsset) == "function" then
+                info = Information:GetAsset(asset)
+            end
+        end)
+    end
+    if typeof(info) ~= "table" then
+        pcall(function()
+            local UnitUtils = getCachedUnitUtils()
+            if UnitUtils and typeof(UnitUtils.GetUnitInfo) == "function" then
+                info = UnitUtils:GetUnitInfo(asset)
+            end
+        end)
+    end
+    return typeof(info) == "table" and info or nil
+end
+
+-- คืน Archetype string ของยูนิต (เช่น "Magical"/"Physical"/"Psychic") หรือ nil
+local function getUnitArchetype(asset)
+    local info = getAssetInfo(asset)
+    if not info then
+        return nil
+    end
+    return info.Archetype or info.DamageType or info.Type
+end
+
 local magicalCache = {}
 local function isMagicalUnit(asset)
     if not asset or asset == "" then
@@ -375,36 +412,8 @@ local function isMagicalUnit(asset)
     if magicalCache[asset] ~= nil then
         return magicalCache[asset]
     end
-    local isMagical = false
-    pcall(function()
-        local UnitUtils = getCachedUnitUtils()
-        if UnitUtils then
-            local stats = UnitUtils:GetUpgradeStats(asset, 0)
-            if typeof(stats) == "table" then
-                if stats.Archetype == "Magical" or stats.DamageType == "Magical" or stats.Type == "Magical" then
-                    isMagical = true
-                    return
-                end
-            end
-        end
-    end)
-    if not isMagical then
-        pcall(function()
-            local Information = getCachedInformation()
-            local info = Information and Information:GetAsset(asset)
-            if typeof(info) == "table" then
-                if info.Archetype == "Magical" or info.DamageType == "Magical" or info.Type == "Magical" then
-                    isMagical = true
-                    return
-                end
-                local stats = info.UpgradeInfo and (info.UpgradeInfo[0] or info.UpgradeInfo["0"] or info.UpgradeInfo[1])
-                if typeof(stats) == "table" and (stats.Archetype == "Magical" or stats.DamageType == "Magical") then
-                    isMagical = true
-                    return
-                end
-            end
-        end)
-    end
+    local arche = getUnitArchetype(asset)
+    local isMagical = (arche == "Magical")
     magicalCache[asset] = isMagical
     return isMagical
 end
@@ -482,7 +491,9 @@ local function getAffordableSlotsOrdered()
         local asset = getSlotAsset(slot)
         table.insert(ranked, {
             slot = slot,
+            asset = asset,
             cost = getSlotPlacementCost(slot),
+            arche = getUnitArchetype(asset),
             magical = isMagicalUnit(asset) and 1 or 0,
         })
     end
@@ -499,6 +510,22 @@ local function getAffordableSlotsOrdered()
     for _, row in ipairs(ranked) do
         table.insert(out, row.slot)
     end
+
+    -- debug: ดูลำดับจริง + asset/cost/archetype/magical (ทุก ~8 วิ กันสแปม)
+    local now = os.clock()
+    if (getgenv()._AE_ORDER_DEBUG or 0) + 8 < now then
+        getgenv()._AE_ORDER_DEBUG = now
+        local parts = {}
+        for i, row in ipairs(ranked) do
+            table.insert(parts, ("#%d slot%s=%s cost=%s arche=%s magic=%d"):format(
+                i, tostring(row.slot), tostring(row.asset),
+                tostring(row.cost), tostring(row.arche), row.magical
+            ))
+        end
+        print("[AE Kaitun] SlotOrder (MagicalFirst=" .. tostring(magicalFirst) .. "): "
+            .. (#parts > 0 and table.concat(parts, " | ") or "(ไม่มีช่องใช้ได้)"))
+    end
+
     return out
 end
 
@@ -1139,8 +1166,7 @@ local function dumpUnitType(asset)
         end
     end)
     pcall(function()
-        local Information = getCachedInformation()
-        local info = Information and Information:GetAsset(asset)
+        local info = getAssetInfo(asset)
         if typeof(info) == "table" then
             print("[AE Kaitun] Information:GetAsset(" .. tostring(asset) .. "):")
             for k, v in pairs(info) do
@@ -1154,13 +1180,16 @@ local function dumpUnitType(asset)
     if not printed then
         print("[AE Kaitun] dumpUnitType: อ่านข้อมูล", asset, "ไม่ได้")
     end
-    print("[AE Kaitun] isMagicalUnit(" .. tostring(asset) .. ")=", isMagicalUnit(asset))
+    print("[AE Kaitun] Archetype(" .. tostring(asset) .. ")=", tostring(getUnitArchetype(asset)),
+        "| isMagicalUnit=", isMagicalUnit(asset))
 end
 
 -- ------------------------------------------------------------------------
 -- Exports
 -- ------------------------------------------------------------------------
 PlacementEngine.isMagicalUnit = isMagicalUnit
+PlacementEngine.getUnitArchetype = getUnitArchetype
+PlacementEngine.getAssetInfo = getAssetInfo
 PlacementEngine.isFarmUnit = isFarmUnit
 PlacementEngine.getUnitCombatStats = getUnitCombatStats
 PlacementEngine.dumpUnitType = dumpUnitType

@@ -52,7 +52,10 @@ local function getCfg()
         EquipNode = cfg.EquipNode,       -- fallback: string key ใน Nodes
         UnequipNode = cfg.UnequipNode,
         ContainerKey = cfg.ContainerKey, -- เช่น "EquipmentData"
-        ArgOrder = tostring(cfg.ArgOrder or "unit_item"), -- unit_item | item_unit | table
+        -- ยืนยันจาก decompile (expidition_lobby.rbxlx:1791706):
+        --   Actions.EquipEquipment(equipmentId, unitId, slotIndex)
+        --   → Nodes.EQUIPMENT_EQUIP:FireServer(equipmentId, unitId, slotIndex)
+        ArgOrder = tostring(cfg.ArgOrder or "item_unit_slot"), -- item_unit_slot | unit_item | item_unit | table
     }
 end
 
@@ -354,25 +357,50 @@ local function rarityRank(asset, fallbackRarity)
     return RARITY_RANK[rarity] or 10, rarity
 end
 
+-- แหล่งจริงว่า equipment id ไหนติดยูนิตไหน: UnitData[unitId].Equipment = { ["1"] = equipmentId }
+-- (ยืนยันจาก decompile: EquipEquipmentToUnit → v60[unitId].Equipment = {["1"]=equipmentId})
+local function buildEquippedMap()
+    local map = {}
+    local data = getPlayerData()
+    local unitData = data and data.UnitData
+    if typeof(unitData) ~= "table" then
+        return map
+    end
+    for unitId, u in pairs(unitData) do
+        if typeof(u) == "table" and typeof(u.Equipment) == "table" then
+            for _, equipId in pairs(u.Equipment) do
+                if equipId ~= nil then
+                    map[tostring(equipId)] = tostring(unitId)
+                end
+            end
+        end
+    end
+    return map
+end
+
 -- equipment ในกระเป๋า → เรียง ดีสุดก่อน (rarity → level → worthiness)
 local function getEquipmentItems(container, cfg)
     local list = {}
     if typeof(container) ~= "table" then
         return list
     end
+    local equippedMap = buildEquippedMap()
     for id, e in pairs(container) do
         if typeof(e) == "table" then
             local asset = e.Asset or e.Name
             if asset then
                 local rank, rarity = rarityRank(asset, e.Rarity)
+                local itemId = e.ID or e.UUID or id
+                local equippedTo = equippedMap[tostring(itemId)]
+                    or e.EquippedTo or e.UnitID or e.EquippedUnit or e.Unit or e.EquippedToUnit
                 table.insert(list, {
-                    ID = e.ID or e.UUID or id,
+                    ID = itemId,
                     Asset = asset,
                     Level = tonumber(e.Level or e.Enhancement or e.Tier) or 0,
                     Rarity = rarity,
                     Rank = rank,
                     Worthiness = tonumber(e.Worthiness or e.Power or e.Stat or e.Rating) or 0,
-                    EquippedTo = e.EquippedTo or e.UnitID or e.EquippedUnit or e.Unit or e.EquippedToUnit,
+                    EquippedTo = equippedTo,
                     Locked = e.Locked == true,
                 })
             end
@@ -450,16 +478,24 @@ end
 ------------------------------------------------------------------------
 -- Fire
 ------------------------------------------------------------------------
--- ยิงผ่าน Fusion Action (ช่องทางหลัก) — Actions.EquipEquipment(unitId, equipmentId)
-local function fireEquipAction(fn, unitId, itemId, argOrder)
-    local args
-    if argOrder == "item_unit" then
-        args = { itemId, unitId }
+-- จัดลำดับ args ตาม argOrder — default = decompile จริง: (equipmentId, unitId, slotIndex)
+local function buildEquipArgs(unitId, itemId, slotIndex, argOrder)
+    if argOrder == "unit_item" then
+        return { unitId, itemId }
+    elseif argOrder == "unit_item_slot" then
+        return { unitId, itemId, slotIndex }
+    elseif argOrder == "item_unit" then
+        return { itemId, unitId }
     elseif argOrder == "table" then
-        args = { { UnitId = unitId, UnitID = unitId, EquipmentId = itemId, EquipmentID = itemId, ItemId = itemId, Id = itemId } }
-    else
-        args = { unitId, itemId }
+        return { { UnitId = unitId, UnitID = unitId, EquipmentId = itemId, EquipmentID = itemId, ItemId = itemId, Id = itemId, SlotIndex = slotIndex, Slot = slotIndex } }
     end
+    -- default item_unit_slot: Actions.EquipEquipment(equipmentId, unitId, slotIndex)
+    return { itemId, unitId, slotIndex }
+end
+
+-- ยิงผ่าน Fusion Action (ช่องทางหลัก) — Actions.EquipEquipment(equipmentId, unitId, slotIndex)
+local function fireEquipAction(fn, unitId, itemId, slotIndex, argOrder)
+    local args = buildEquipArgs(unitId, itemId, slotIndex, argOrder)
     local ok, err = pcall(function()
         return fn(table.unpack(args))
     end)
@@ -470,14 +506,7 @@ local function fireEquipAction(fn, unitId, itemId, argOrder)
 end
 
 local function fireEquip(node, unitId, itemId, slotIndex, argOrder)
-    local args
-    if argOrder == "item_unit" then
-        args = { itemId, unitId }
-    elseif argOrder == "unit_item_slot" then
-        args = { unitId, itemId, slotIndex }
-    else
-        args = { unitId, itemId }
-    end
+    local args = buildEquipArgs(unitId, itemId, slotIndex, argOrder)
     local ok = pcall(function()
         if typeof(node.FireServer) == "function" then
             node:FireServer(table.unpack(args))
@@ -564,7 +593,7 @@ local function autoEquipBestItems(reason)
                     ))
                     local okFire
                     if disc.equipAction then
-                        okFire = fireEquipAction(disc.equipAction, unit.ID, item.ID, cfg.ArgOrder)
+                        okFire = fireEquipAction(disc.equipAction, unit.ID, item.ID, slot, cfg.ArgOrder)
                     else
                         okFire = fireEquip(disc.equipNode, unit.ID, item.ID, slot, cfg.ArgOrder)
                     end
