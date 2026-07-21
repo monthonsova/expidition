@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 -- --     AE Kaitun — Replicas & State Module
 
 local Replicas = {}
@@ -97,3 +98,105 @@ Replicas.getPartyReplica = getPartyReplica
 Replicas.getGamePlayerReplica = getGamePlayerReplica
 
 return Replicas
+=======
+-- --     AE Kaitun - Replicas & State Module
+-- -- ]]
+-- 
+-- local Replicas = {}
+-- local Core = _G.AEKaitun_Loader and _G.AEKaitun_Loader.require("src/Core.lua") or loadstring(readfile("expidition/src/Core.lua"))()
+-- 
+-- local Nodes = Core.Nodes
+-- local Dependencies = Core.Dependencies
+-- local Shared = Core.Shared
+-- local peek = Core.peek
+-- local waitPeek = Core.waitPeek
+-- 
+-- -- เกมจริง (FusionPackage.Shared module - คนละตัวกับ ReplicatedStorage.Shared folder ที่เราใช้)
+-- -- นิยาม IsInGame = IsFilled(Dependencies.GameState) คือเช็คว่า GameState ถูก set (ไม่ใช่ nil) หรือยัง
+-- -- อ่านตรงจาก Dependencies.GameState เลย ไม่ต้อง require โมดูล Shared ตัวที่สองเพิ่ม
+-- local function isInGame()
+-- local ok, gs = pcall(peek, Dependencies.GameState)
+-- if ok and gs ~= nil then
+-- return true
+-- end
+-- return false
+-- end
+-- 
+-- local function getPlayerData()
+-- return waitPeek(Dependencies.PlayerData, 60, function(v)
+-- return typeof(v) == "table"
+-- end)
+-- end
+-- 
+-- local function getEquippedCount()
+-- local data = getPlayerData()
+-- if not data then
+-- return 0
+-- end
+-- local unitData = data.UnitData or {}
+-- local n = 0
+-- for _, u in pairs(unitData) do
+-- if typeof(u) == "table" and u.Equipped then
+-- n += 1
+-- end
+-- end
+-- return n
+-- end
+-- 
+-- 
+-- local function getAccountLevel()
+-- local lvl = 1
+-- pcall(function()
+-- local data = peek(Dependencies.PlayerData)
+-- if typeof(data) ~= "table" then
+-- return
+-- end
+-- local n = tonumber(data.Level)
+-- if not n and data.Level ~= nil then
+-- local ok, peeked = pcall(peek, data.Level)
+-- if ok then
+-- n = tonumber(peeked)
+-- end
+-- end
+-- lvl = n or 1
+-- end)
+-- return math.max(1, lvl)
+-- end
+-- 
+-- -- อ่าน Settings["Auto Farm"] แยก Clear (เคลียร์ด่าน) / Grind (ฟาร์มเรื่อย)
+-- 
+-- local function getPartyReplica(timeout)
+-- timeout = timeout or 10
+-- local t0 = os.clock()
+-- while os.clock() - t0 < timeout do
+-- local ok, party = pcall(function()
+-- return Nodes.GET_PARTY_DATA_REPLICA:InvokeSelf()
+-- end)
+-- if ok and party then
+-- return party
+-- end
+-- task.wait(0.2)
+-- end
+-- return nil
+-- end
+-- 
+-- 
+-- local function getGamePlayerReplica()
+-- local ok, rep = pcall(function()
+-- return Nodes.GET_GAME_PLAYER_REPLICA:InvokeSelf()
+-- end)
+-- if ok then
+-- return rep
+-- end
+-- return nil
+-- end
+-- 
+-- Replicas.isInGame = isInGame
+-- Replicas.getPlayerData = getPlayerData
+-- Replicas.getEquippedCount = getEquippedCount
+-- Replicas.getAccountLevel = getAccountLevel
+-- Replicas.getPartyReplica = getPartyReplica
+-- Replicas.getGamePlayerReplica = getGamePlayerReplica
+-- 
+-- return Replicas
+>>>>>>> f7875d3661c03c148688ef24d741a13f568c24be

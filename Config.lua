@@ -1,4 +1,8 @@
+<<<<<<< HEAD
 -- AE Kaitun — Anime Expeditions Configuration
+=======
+-- AE Kaitun - Anime Expeditions Configuration
+>>>>>>> f7875d3661c03c148688ef24d741a13f568c24be
 
 if not _G.Settings then
     _G.Settings = {}
@@ -85,7 +89,7 @@ local defaultSettings = {
         Clear = {
             Enabled = true,
             ByLevel = true,
-            -- ProgressionIndex เกมจริง: 1 School → 2 Flower → 3 Dressrosa → 4 FairyKing → 5 KingsTomb
+            -- ProgressionIndex เกมจริง: 1 School -> 2 Flower -> 3 Dressrosa -> 4 FairyKing -> 5 KingsTomb
             -- MinLevel = เกณฑ์เสริม (ปลดจริงดู CompletedMaps / HasMapUnlocked)
             MapsByLevel = {
                 { MinLevel = 1,  Map = "SchoolGrounds" },
@@ -116,20 +120,20 @@ local defaultSettings = {
             Difficulty = "Hard",
         },
 
-        -- แพ้ติดกันกี่ครั้งแล้ว soft-reset (กลับ lobby คิวเดิมบนเซิร์ฟใหม่) — 0 = ปิด
+        -- แพ้ติดกันกี่ครั้งแล้ว soft-reset (กลับ lobby คิวเดิมบนเซิร์ฟใหม่) - 0 = ปิด
         FailSoftReset = 8,
     },
 
     -- alias ระดับบน (อ่านได้ทั้งสองที่)
     ["Fail Soft Reset"] = 8,
 
-    -- แพ้ติด / soft-reset → SmartPlay: เคลียร์กระเป๋า → สุ่ม → ฟีด/evolve → ทีมใหม่
+    -- แพ้ติด / soft-reset -> SmartPlay: เคลียร์กระเป๋า -> สุ่ม -> ฟีด/evolve -> ทีมใหม่
     ["Smart Play Enabled"] = true,
     ["Smart Play"] = {
         Enabled = true,
         OnFailSoftReset = true,
         OnLobbyReturnAfterFail = true,
-        SellWhenFreeSlotsBelow = 15, -- ว่างน้อยกว่านี้ → ขาย Rare/Epic
+        SellWhenFreeSlotsBelow = 15, -- ว่างน้อยกว่านี้ -> ขาย Rare/Epic
         SellDuplicateLegendaries = true, -- true = ขาย Legendary ซ้ำ Asset (เก็บเลเวลสูงสุด)
         SummonRounds = 3,
         SummonAmount = 10,
