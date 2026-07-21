@@ -12,31 +12,45 @@ local Services = {
     CoreGui = game:GetService("CoreGui"),
 }
 
-local LocalPlayer = Services.Players.LocalPlayer
+local function getLocalPlayer()
+    local player = Services.Players.LocalPlayer
+    if not player then
+        pcall(function()
+            player = Services.Players:GetPropertyChangedSignal("LocalPlayer"):Wait()
+        end)
+    end
+    return player or Services.Players.LocalPlayer
+end
+
 local LOBBY_PLACE_ID = 84515722934860
 
 -- ------------------------------------------------------------------------
 -- 1. Anti-AFK System (VirtualUser + Loop Nudge)
 -- ------------------------------------------------------------------------
 local function setupAntiAFK()
-    -- Signal 1: Listen to Idled event
-    pcall(function()
-        LocalPlayer.Idled:Connect(function()
-            Services.VirtualUser:CaptureController()
-            Services.VirtualUser:ClickButton2(Vector2.new(0, 0))
-            print("[AE Kaitun Anti-AFK] Prevented 20-min idle kick!")
+    local player = getLocalPlayer()
+    if player then
+        pcall(function()
+            player.Idled:Connect(function()
+                pcall(function()
+                    Services.VirtualUser:CaptureController()
+                    Services.VirtualUser:ClickButton2(Vector2.new(0, 0))
+                end)
+                print("[AE Kaitun Anti-AFK] Prevented 20-min idle kick!")
+            end)
         end)
-    end)
+    end
 
     -- Signal 2: Periodic background click nudge every 120 seconds
     task.spawn(function()
         while true do
             task.wait(120)
             pcall(function()
+                local camCF = workspace.CurrentCamera and workspace.CurrentCamera.CFrame or CFrame.new()
                 Services.VirtualUser:CaptureController()
-                Services.VirtualUser:Button2Down(Vector2.new(0, 0), workspace.CurrentCamera.CFrame)
+                Services.VirtualUser:Button2Down(Vector2.new(0, 0), camCF)
                 task.wait(0.1)
-                Services.VirtualUser:Button2Up(Vector2.new(0, 0), workspace.CurrentCamera.CFrame)
+                Services.VirtualUser:Button2Up(Vector2.new(0, 0), camCF)
             end)
         end
     end)
@@ -53,12 +67,13 @@ local function triggerRejoin(reason)
     isRejoining = true
     warn("[AE Kaitun Auto-Rejoin] Triggered rejoin due to: " .. tostring(reason))
 
+    local player = getLocalPlayer()
     while true do
         pcall(function()
-            if game.PlaceId == LOBBY_PLACE_ID then
-                Services.TeleportService:Teleport(LOBBY_PLACE_ID, LocalPlayer)
+            if player then
+                Services.TeleportService:Teleport(LOBBY_PLACE_ID, player)
             else
-                Services.TeleportService:Teleport(LOBBY_PLACE_ID, LocalPlayer)
+                Services.TeleportService:Teleport(LOBBY_PLACE_ID)
             end
         end)
         task.wait(5)
@@ -75,7 +90,14 @@ local function setupAutoRejoin()
         end)
     end)
 
-    -- Event 2: Monitor CoreGui promptOverlay for disconnect dialogs
+    -- Event 2: TeleportInitFailed error handling
+    pcall(function()
+        Services.TeleportService.TeleportInitFailed:Connect(function(player, result, err)
+            triggerRejoin("TeleportInitFailed: " .. tostring(err))
+        end)
+    end)
+
+    -- Event 3: Monitor CoreGui promptOverlay for disconnect dialogs
     task.spawn(function()
         while true do
             task.wait(3)
