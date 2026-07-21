@@ -250,12 +250,20 @@ Lv1 SchoolGrounds → Lv15 FlowerForest → Lv30 Dressrosa → Lv45 FairyKingFor
 
 ## 6g. Placement strategy (`PlacementEngine.lua` + `InGame.lua`)
 
-ใช้ strategy แบบ `Kaitun.lua` (ต้นฉบับ): `scorePlacePosition` วางตามระยะ — ใกล้ threat (มอนใกล้ฐาน) > ใกล้มอนทั่วไป > ปลายทาง (กันฐาน) > ตามทาง ; เรียงช่องด้วย `getAffordableSlotsOrdered` (ฟาร์มไปท้าย → ถูกก่อน) + เฟส econ (สร้างบอดี้ → ฟาร์ม 1 ตัว → ดาเมจ) — **ไม่มี** cluster/anchor/coverage (ตัดออกแล้วเพราะทำให้วางกองผิดจุด/แพ้)
+**สำคัญ (แก้บั๊กใหญ่ 2026-07):** `PlacementEngine.lua` เคยถูก rewrite เป็นเวอร์ชันย่อที่ใช้ API ผิด (`workspace:FindFirstChild("GroundPlacement"/"Path"/"Enemies")` แทน `CollectionService:GetTagged` / `Dependencies.MapState.Paths` / `Dependencies.GameEnemies`, `canPlaceAt` คืน `true` เสมอ, และ **ขาด `getThreatEnemies`** ทั้งที่ `InGame.lua` import+เรียกอยู่ → `attempt to call a nil value` ทุกครั้งที่วาง = วางไม่ได้เลย). แก้แล้วโดย **port geometry ทั้งชุดจาก `Kaitun.lua` ของจริง** กลับเข้ามา:
+- `getPlaceableParts(asset)` = `CollectionService:GetTagged("GroundPlacement"/"HillPlacement")` ตาม `Information:GetAsset(asset).PlacementType`
+- `getPathPoints` / `getPathEndPositions` = `Dependencies.MapState.Paths` (fallback tag `"Path"`)
+- `getEnemyPositions` = `Dependencies.GameEnemies` (fallback `workspace.Enemies`)
+- `canPlaceAt` = `Actions.IsPlacementAllowed` ก่อน → fallback Blockcast จริง (เช็ค tag + ชนยูนิตผ่าน `Nodes.GET_ALL_UNIT_MODELS:InvokeSelf()`)
+- `getThreatEnemies` / `scorePlacePosition(pos,e,pp,pe,threat)` / `buildAAStylePlaceCFrames` = ต้นฉบับ Kaitun (seeds รอบมอนใกล้ฐาน → มอนทั่วไป → โซนฐาน → ตามทาง + emergency scan)
+- `getTotalPlacementCap` = Fallback(per-player Total → Global) คืน `nil` ถ้าอ่านไม่ได้ (ไม่บล็อกด้วยเลขปลอม)
+
+strategy: `scorePlacePosition` ให้คะแนนตามระยะ — ใกล้ threat (มอนใกล้ฐาน) > ใกล้มอนทั่วไป > ปลายทาง (กันฐาน) > ตามทาง ; เรียงช่องฐานด้วย `getAffordableSlotsOrdered` (ฟาร์มท้าย → ถูกก่อน) + เฟส econ ใน `InGame` (สร้างบอดี้ → ฟาร์ม 1 ตัว → ดาเมจ) — **ไม่มี** cluster/anchor/coverage
 
 เพิ่มอย่างเดียว: **เน้นเลือกวาง Magical ก่อน**
-- `isMagicalUnit(asset)` — probe `GetUpgradeStats`/`Information:GetAsset` หลาย field (`DamageType/AttackType/Type/Element/Class/...`) เช็คคำว่า `magic`
-- เฟสดาเมจ (phase 3, ต้อง `CarryFirst`) เรียงช่อง: ฟาร์มท้าย → **Magical ก่อน** → DPS สูง → ถูกสุด
-- ถ้า detect Magical ไม่เจอ (field ชื่อแปลก) → `AEKaitun.DumpUnitType("<asset>")` ดู field จริง แล้วเพิ่มใน `MAGIC_TYPE_FIELDS`
+- `isMagicalUnit(asset)` — เช็ค `Archetype/DamageType/Type == "Magical"` จาก `GetUpgradeStats`/`Information:GetAsset` (cache)
+- เฟสดาเมจ (phase 3, ต้อง `CarryFirst`) เรียงช่อง: ฟาร์มท้าย → **Magical ก่อน** → ถูกสุด (ตาม Kaitun.lua เป๊ะ — วางบอดี้ไว ไม่เอา DPS-first ที่ทำให้ชอบตัวแพงวางช้า)
+- ถ้า detect Magical ไม่เจอ (field ชื่อแปลก) → `AEKaitun.DumpUnitType("<asset>")` ดู field จริง
 
 Config:
 ```lua
