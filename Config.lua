@@ -12,6 +12,7 @@ local defaultSettings = {
     -- ใส่โค้ดอัตโนมัติ (Nodes.CLAIM_CODE)
     ["Auto Redeem Codes"] = true,
     ["Codes"] = {
+        "100mvisits",
         "100K!",
         "30KLIKES!",
         "EXPEDITIONS",
