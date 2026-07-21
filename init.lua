@@ -64,6 +64,7 @@ local Lobby = Loader.require("src/Lobby.lua")
 local PlacementEngine = Loader.require("src/PlacementEngine.lua")
 local InGame = Loader.require("src/InGame.lua")
 local StatsUI = Loader.require("src/StatsUI.lua")
+local SmartPlay = Loader.require("src/SmartPlay.lua")
 local FarmLoop = Loader.require("src/FarmLoop.lua")
 
 -- Print Status
@@ -116,9 +117,13 @@ getgenv().AEKaitun = {
     GetBannerMythicNames = Summon.getBannerMythicNames,
     GetBannerPool = Summon.getBannerPoolByRarity,
     EquipLegendaries = Team.equipLegendariesToHotbar,
+    EnsureMythicTeam = Team.ensureMythicTeam,
+    BuildMythicTeam = Team.buildMythicTeam,
     CountLegendaries = Summon.countLegendariesInBag,
     CountUniqueLegendaries = Summon.countUniqueLegendariesInBag,
+    CountUniqueMythics = Summon.countUniqueMythicsInBag,
     GetSummonStop = Summon.getSummonStopUniqueLegendary,
+    GetSummonStopMythic = Summon.getSummonStopUniqueMythic,
     CountMythics = function()
         return #Summon.getMythicUnitsInBag()
     end,
@@ -153,9 +158,19 @@ getgenv().AEKaitun = {
     GetActiveMap = AutoFarmManager.getActiveStoryMap,
     GetGrindMap = AutoFarmManager.getGrindMap,
     GetAccountLevel = Replicas.getAccountLevel,
+    GetFarmState = AutoFarmManager.getFarmState,
+    DebugProgress = AutoFarmManager.debugProgressSnapshot,
+    RestartMatch = AutoFarmManager.restartCurrentMatch,
+    NextStage = AutoFarmManager.nextStageFromMatch,
+    SetupEndScreen = InGame.setupEndScreenHandler,
     StatsUI = StatsUI.createStatsUI,
     GetStats = StatsUI.getStatsSnapshot,
     ClaimRewards = Rewards.claimAllRewards,
+    SmartPlay = SmartPlay.runRecovery,
+    SmartPlayBag = function()
+        return SmartPlay.countUnitBag(), SmartPlay.getUnitBagLimit(), SmartPlay.getBagFreeSlots()
+    end,
+    RemakeBestTeam = Team.remakeBestTeam,
 }
 
 return Loader

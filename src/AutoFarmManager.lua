@@ -24,9 +24,87 @@ local function getFarmState()
             inMatch = false,
             grindMode = false,
             activeMap = nil,
+            -- ผลแมตช์ล่าสุด / สถิติแพ้ (ใช้ตอน Defeat → Retry ด่านเดิม ไม่ขยับคิว)
+            lastVictory = nil,
+            failStreak = 0,
+            needSmartPlay = false,
+            smartPlayAt = 0,
+            totalFails = 0,
+            totalWins = 0,
+            endScreenAt = 0,
         }
     end
-    return g.AE_FarmState
+    local st = g.AE_FarmState
+    if st.failStreak == nil then
+        st.failStreak = 0
+    end
+    if st.needSmartPlay == nil then
+        st.needSmartPlay = false
+    end
+    if st.totalFails == nil then
+        st.totalFails = 0
+    end
+    if st.totalWins == nil then
+        st.totalWins = 0
+    end
+    return st
+end
+
+-- บันทึกผลจาก SHOW_END_SCREEN (Victory=true/false)
+local function markMatchResult(victory)
+    local st = getFarmState()
+    st.lastVictory = victory == true
+    st.endScreenAt = os.clock()
+    if victory then
+        st.failStreak = 0
+        st.totalWins = (st.totalWins or 0) + 1
+    else
+        st.failStreak = (st.failStreak or 0) + 1
+        st.totalFails = (st.totalFails or 0) + 1
+    end
+    return st
+end
+
+-- Restart ด่านเดิมโดยไม่ผ่าน confirmation prompt (Actions.GameRestart ต้องส่ง true)
+local function restartCurrentMatch(reason)
+    local ok = pcall(function()
+        local replica = Nodes.GET_GAME_REPLICA:InvokeSelf()
+        if replica then
+            replica:FireServer("Restart")
+            return true
+        end
+    end)
+    if ok then
+        print("[AE Kaitun] Restart ด่านเดิม", reason and ("| " .. tostring(reason)) or "")
+        return true
+    end
+    ok = pcall(function()
+        if Actions and Actions.GameRestart then
+            return Actions.GameRestart(true)
+        end
+    end)
+    return ok == true
+end
+
+-- Next stage (เฉพาะตอนชนะ + มีด่านถัดไป) — fallback ถ้า AutoNext ของเกมไม่ยิง
+local function nextStageFromMatch(reason)
+    local ok = pcall(function()
+        local replica = Nodes.GET_GAME_REPLICA:InvokeSelf()
+        if replica then
+            replica:FireServer("Next")
+            return true
+        end
+    end)
+    if ok then
+        print("[AE Kaitun] Next stage", reason and ("| " .. tostring(reason)) or "")
+        return true
+    end
+    ok = pcall(function()
+        if Actions and Actions.GameNext then
+            return Actions.GameNext()
+        end
+    end)
+    return ok == true
 end
 
 local function isInGrindMode()
@@ -63,8 +141,11 @@ local function getAutoFarm()
     end
     if typeof(mapsByLevel) ~= "table" then
         mapsByLevel = {
-            { MinLevel = 1,                                                        Map = "SchoolGrounds" },
-            { MinLevel = tonumber(_G.Settings["FlowerForest Unlock Level"]) or 15, Map = "FlowerForest" },
+            { MinLevel = 1,  Map = "SchoolGrounds" },
+            { MinLevel = 15, Map = "FlowerForest" },
+            { MinLevel = 30, Map = "Dressrosa" },
+            { MinLevel = 45, Map = "FairyKingForest" },
+            { MinLevel = 60, Map = "KingsTomb" },
         }
     end
 
@@ -98,7 +179,7 @@ local function getAutoFarm()
     local grindMap = grind.Map or grind.MapName
     if grindMap ~= nil then
         grindMap = tostring(grindMap)
-        if grindMap == "" then
+        if grindMap == "" or grindMap == "nil" or grindMap == "auto" then
             grindMap = nil
         end
     end
@@ -120,7 +201,7 @@ local function getAutoFarm()
         Maps = (typeof(clear.Maps) == "table" and clear.Maps)
             or (typeof(af.Maps) == "table" and af.Maps)
             or _G.Settings["Story Maps"]
-            or { "SchoolGrounds", "FlowerForest", "Dressrosa", "KingsTomb", "FairyKingForest" },
+            or { "SchoolGrounds", "FlowerForest", "Dressrosa", "FairyKingForest", "KingsTomb" },
         Acts = (typeof(clear.Acts) == "table" and clear.Acts)
             or (typeof(af.Acts) == "table" and af.Acts)
             or _G.Settings["Story Acts"]
@@ -164,69 +245,281 @@ local function getQueueSettings()
     return q
 end
 
--- forward declare: getActiveStoryMap เรียกตอนรันหลังฟังก์ชันนี้ถูกกำหนด
+-- forward declare
 local isMapFullyCleared
+local isActCleared
 
--- แมพ Clear เป้าหมาย: ในแมพที่ปลดตามเลเวล เลือกตัวที่ยังไม่เคลียร์ครบก่อน (MinLevel น้อย→มาก)
--- ถ้าเคลียร์ครบทุกแมพที่ปลดแล้ว → ใช้แมพเลเวลสูงสุด (สำหรับ Grind fallback)
-local function getActiveStoryMap()
-    local af = getAutoFarm()
-    if not af.ByLevel then
-        for _, map in ipairs(af.Maps) do
-            if isMapFullyCleared and not isMapFullyCleared(map) then
-                return map
-            elseif not isMapFullyCleared then
-                return af.Maps[1] or "SchoolGrounds"
-            end
-        end
-        return af.Maps[1] or "SchoolGrounds"
+local DEFAULT_STORY_MAPS = {
+    "SchoolGrounds",
+    "FlowerForest",
+    "Dressrosa",
+    "FairyKingForest",
+    "KingsTomb",
+}
+
+-- ดึงค่า nested จาก PlayerData แบบทน Fusion state ซ้อน
+local function deepPeekValue(v)
+    if v == nil then
+        return nil
     end
-    local lvl = getAccountLevel()
-    local bestAny = "SchoolGrounds"
-    local bestAnyMin = -1
-    local bestUncleared = nil
-    local bestUnclearedMin = math.huge
-    for _, row in ipairs(af.MapsByLevel) do
-        if typeof(row) == "table" then
-            local minLv = tonumber(row.MinLevel) or 1
-            local map = row.Map or row.MapName
-            if map and lvl >= minLv then
-                if minLv >= bestAnyMin then
-                    bestAnyMin = minLv
-                    bestAny = tostring(map)
-                end
-                local uncleared = true
-                if isMapFullyCleared then
-                    uncleared = not isMapFullyCleared(tostring(map))
-                end
-                if uncleared and minLv < bestUnclearedMin then
-                    bestUnclearedMin = minLv
-                    bestUncleared = tostring(map)
-                end
-            end
-        end
+    if typeof(v) == "table" then
+        return v
     end
-    return bestUncleared or bestAny
+    local ok, peeked = pcall(peek, v)
+    if ok then
+        return peeked
+    end
+    return v
 end
 
--- แมพ Grind (ตั้งเองได้ — ว่าง = ตาม Clear / เลเวล)
+local function getCompletedMapsRoot()
+    local data = deepPeekValue(peek(Dependencies.PlayerData))
+    if typeof(data) ~= "table" then
+        return nil
+    end
+    return deepPeekValue(data.CompletedMaps)
+end
+
+local function getStoryCompletedMaps()
+    local cm = getCompletedMapsRoot()
+    if typeof(cm) ~= "table" then
+        return nil
+    end
+    local story = deepPeekValue(cm.Story)
+    if typeof(story) == "table" then
+        return story
+    end
+    -- บางที่ส่ง CompletedMaps.Story มาตรงๆ
+    if cm.SchoolGrounds or cm.FlowerForest then
+        return cm
+    end
+    return story
+end
+
+-- ลำดับแมพ Story จากเกม (ProgressionIndex) หรือ Config.Maps
+local function getOrderedStoryMapList()
+    local af = getAutoFarm()
+    local ordered = nil
+    pcall(function()
+        local Maps = Dependencies.Information and Dependencies.Information.Maps
+        if Maps and typeof(Maps.GetOrderedMaps) == "function" then
+            ordered = Maps:GetOrderedMaps("Story")
+        end
+    end)
+    if typeof(ordered) == "table" and #ordered > 0 then
+        local want = {}
+        for _, m in ipairs(af.Maps) do
+            want[tostring(m)] = true
+        end
+        local filtered = {}
+        for _, m in ipairs(ordered) do
+            if want[tostring(m)] then
+                table.insert(filtered, tostring(m))
+            end
+        end
+        if #filtered > 0 then
+            return filtered
+        end
+        return ordered
+    end
+    if typeof(af.Maps) == "table" and #af.Maps > 0 then
+        return af.Maps
+    end
+    return DEFAULT_STORY_MAPS
+end
+
+-- CompletedMaps.Story.SchoolGrounds["Act 1"].Normal = { ClearCount = ... }
+-- เกม HasMapUnlocked เช็คแค่มี key ของ Act (ไม่บังคับ Difficulty)
+isActCleared = function(mapName, actName, difficulty)
+    mapName = tostring(mapName)
+    actName = tostring(actName)
+
+    -- ทางเกม: HasMapCompleted เช็ค path มีจริง
+    local cmRoot = getCompletedMapsRoot()
+    if typeof(cmRoot) == "table" then
+        local Maps = Dependencies.Information and Dependencies.Information.Maps
+        if Maps and typeof(Maps.HasMapCompleted) == "function" then
+            if difficulty then
+                local okDiff, clearedDiff = pcall(function()
+                    return Maps:HasMapCompleted(cmRoot, "Story", mapName, actName, tostring(difficulty))
+                end)
+                if okDiff and clearedDiff == true then
+                    return true
+                end
+            end
+            -- fallback: มี Act ใน CompletedMaps = เคลียร์แล้ว (ตรงกับ HasMapUnlocked ของเกม)
+            local okAct, clearedAct = pcall(function()
+                return Maps:HasMapCompleted(cmRoot, "Story", mapName, actName)
+            end)
+            if okAct and clearedAct == true then
+                return true
+            end
+        end
+    end
+
+    local story = getStoryCompletedMaps()
+    if typeof(story) ~= "table" then
+        return false
+    end
+    local mapT = deepPeekValue(story[mapName])
+    if typeof(mapT) ~= "table" then
+        return false
+    end
+    local actT = deepPeekValue(mapT[actName])
+    if actT == nil then
+        return false
+    end
+    if actT == true then
+        return true
+    end
+    if typeof(actT) ~= "table" then
+        return false
+    end
+
+    if difficulty then
+        local diffT = deepPeekValue(actT[difficulty])
+        if diffT == true then
+            return true
+        end
+        if typeof(diffT) == "table" then
+            return (tonumber(diffT.ClearCount) or 0) > 0 or diffT.Cleared == true
+        end
+        -- รูปแบบเก่า: มี act แล้วถือว่าเคลียร์ (เกม HasMapUnlocked ใช้แบบนี้)
+        if typeof(actT.ClearCount) == "number" then
+            return actT.ClearCount > 0
+        end
+        -- ถ้ามี key ความยากอื่นหรือข้อมูลใน act → ถือว่าเคยเคลียร์ act นี้แล้ว
+        for k, v in pairs(actT) do
+            if k == "Normal" or k == "Hard" or k == "Nightmare" or k == "ClearCount" or k == "FastestTime" then
+                if v == true then
+                    return true
+                end
+                if typeof(v) == "table" and ((tonumber(v.ClearCount) or 0) > 0 or v.Cleared == true) then
+                    return true
+                end
+                if typeof(v) == "number" and v > 0 then
+                    return true
+                end
+            end
+        end
+        return false
+    end
+
+    if typeof(actT.ClearCount) == "number" then
+        return actT.ClearCount > 0
+    end
+    for _, v in pairs(actT) do
+        if v == true then
+            return true
+        end
+        if typeof(v) == "table" and ((tonumber(v.ClearCount) or 0) > 0 or v.Cleared == true) then
+            return true
+        end
+    end
+    return false
+end
+
+isMapFullyCleared = function(mapName, acts, diffs)
+    acts = acts or getAutoFarm().Acts
+    diffs = diffs or getAutoFarm().Difficulties
+    if not mapName or mapName == "" then
+        return false
+    end
+    for _, diff in ipairs(diffs) do
+        for _, act in ipairs(acts) do
+            if not isActCleared(mapName, act, diff) then
+                return false
+            end
+        end
+    end
+    return true
+end
+
+-- ปลดแมพ: progression ของเกม (แมพก่อนหน้าเคลียร์) — ไม่ล็อกด้วย MinLevel
+-- MinLevel เป็นแค่ log/advice ไม่กันเล่นแมพถัดไป (บั๊กเดิม: School ครบ → Grind Act1 เพราะ Lv < 15)
+local function isStoryMapUnlocked(mapName)
+    mapName = tostring(mapName)
+    local cm = getCompletedMapsRoot()
+
+    local unlocked = nil
+    pcall(function()
+        local Maps = Dependencies.Information and Dependencies.Information.Maps
+        if Maps and typeof(Maps.HasMapUnlocked) == "function" and typeof(cm) == "table" then
+            unlocked = Maps:HasMapUnlocked(cm, "Story", mapName)
+        end
+    end)
+    if unlocked == true then
+        return true
+    end
+
+    local ordered = getOrderedStoryMapList()
+    local idx = nil
+    for i, m in ipairs(ordered) do
+        if tostring(m) == mapName then
+            idx = i
+            break
+        end
+    end
+    if not idx then
+        return false
+    end
+    if idx == 1 then
+        return true
+    end
+    return isMapFullyCleared(ordered[idx - 1])
+end
+
+-- แมพ Clear เป้าหมาย: ตัวแรกที่ปลดแล้วแต่ยังไม่เคลียร์ครบ
+local function getActiveStoryMap()
+    local ordered = getOrderedStoryMapList()
+    local lastUnlocked = ordered[1] or "SchoolGrounds"
+    for _, map in ipairs(ordered) do
+        if isStoryMapUnlocked(map) then
+            lastUnlocked = map
+            if not isMapFullyCleared(map) then
+                return map
+            end
+        end
+    end
+    return lastUnlocked
+end
+
+-- แมพ Grind: ตั้งเองได้ — ว่าง = แมพสุดท้ายในลิสต์ที่เคลียร์แล้ว / active
 local function getGrindMap()
     local af = getAutoFarm()
-    if af.GrindMap then
+    if af.GrindMap and tostring(af.GrindMap) ~= "" then
         return af.GrindMap
+    end
+    local ordered = getOrderedStoryMapList()
+    for i = #ordered, 1, -1 do
+        if isMapFullyCleared(ordered[i]) then
+            return ordered[i]
+        end
     end
     return getActiveStoryMap()
 end
 
+-- ลิสต์แมพ Clear: เฉพาะแมพเป้าปัจจุบัน (ตัวแรกที่ยังไม่เคลียร์)
+-- อย่าใส่ทุกแมพที่ปลดแล้ว — กัน index ชี้ School Act1 หลังเคลียร์ School ครบ
 local function getStoryMaps()
     local af = getAutoFarm()
     if not af.ClearEnabled then
         return {}
     end
-    if af.ByLevel then
-        return { getActiveStoryMap() }
+    local active = getActiveStoryMap()
+    if active and not isMapFullyCleared(active) then
+        return { active }
     end
-    return af.Maps
+    local list = {}
+    for _, map in ipairs(getOrderedStoryMapList()) do
+        if isStoryMapUnlocked(map) and not isMapFullyCleared(map) then
+            table.insert(list, map)
+        end
+    end
+    if #list == 0 then
+        table.insert(list, active or "SchoolGrounds")
+    end
+    return list
 end
 
 local function getStoryActs()
@@ -237,7 +530,6 @@ local function getStoryDifficulties()
     return getAutoFarm().Difficulties
 end
 
--- ฟาร์มเรื่อย = Grind.Map (หรือแมพ Clear) + Grind.Act + Grind.Difficulty
 local function getGrindStage()
     local af = getAutoFarm()
     return {
@@ -287,73 +579,24 @@ local function getCurrentFarmStage()
     return list[idx] or list[1], idx, #list
 end
 
--- CompletedMaps.Story.SchoolGrounds["Act 1"].Normal = { ClearCount = ... }
-local function isActCleared(mapName, actName, difficulty)
-    local data = peek(Dependencies.PlayerData)
-    local cm = data and data.CompletedMaps
-    if typeof(cm) ~= "table" then
-        return false
-    end
-    local story = cm.Story
-    local mapT = story and story[mapName]
-    local actT = mapT and mapT[actName]
-    if actT == nil then
-        return false
-    end
-    if actT == true then
+-- เคลียร์ครบทั้งลิสต์ Story ที่ตั้งไว้ (ไม่ใช่แค่แมพที่ปลดแล้ว) — กันเข้า Grind กลางทาง
+local function areAllConfiguredStoryMapsCleared()
+    local maps = getOrderedStoryMapList()
+    if #maps == 0 then
         return true
     end
-    if typeof(actT) ~= "table" then
-        return false
-    end
-
-    -- ถ้าระบุ Difficulty แล้ว → ดูเฉพาะช่องนั้น (อย่าเอา Hard มาถือว่าเคลียร์ Normal)
-    if difficulty then
-        local diffT = actT[difficulty]
-        if diffT == true then
-            return true
-        end
-        if typeof(diffT) == "table" then
-            return (tonumber(diffT.ClearCount) or 0) > 0
-        end
-        -- รูปแบบเก่าไม่มีแยก Normal/Hard
-        if typeof(actT.ClearCount) == "number" then
-            return actT.ClearCount > 0
-        end
-        return false
-    end
-
-    if typeof(actT.ClearCount) == "number" then
-        return actT.ClearCount > 0
-    end
-    for _, v in pairs(actT) do
-        if v == true then
-            return true
-        end
-        if typeof(v) == "table" and (tonumber(v.ClearCount) or 0) > 0 then
-            return true
-        end
-    end
-    return false
-end
-
-isMapFullyCleared = function(mapName, acts, diffs)
-    acts = acts or getStoryActs()
-    diffs = diffs or getStoryDifficulties()
-    if not mapName or mapName == "" then
-        return false
-    end
-    for _, diff in ipairs(diffs) do
-        for _, act in ipairs(acts) do
-            if not isActCleared(mapName, act, diff) then
-                return false
-            end
+    for _, map in ipairs(maps) do
+        if not isMapFullyCleared(map) then
+            return false
         end
     end
     return true
 end
 
--- พร้อมเข้า Grind หรือยัง (ตาม Clear.Enabled / Grind.AfterClear)
+local function areAllUnlockedStoryMapsCleared()
+    return areAllConfiguredStoryMapsCleared()
+end
+
 local function canEnterGrindMode()
     local af = getAutoFarm()
     if not af.LoopHardAct1AfterClear then
@@ -365,15 +608,37 @@ local function canEnterGrindMode()
     if not af.GrindAfterClear then
         return true
     end
-    return isMapFullyCleared(getActiveStoryMap())
+    -- สำคัญ: ต้องเคลียร์ครบทุกแมพในลิสต์ (School→…→KingsTomb) ก่อน Grind
+    return areAllConfiguredStoryMapsCleared()
 end
 
--- เลเวลขึ้นแล้วเปลี่ยนแมพ → ออกจาก grind เก่า เริ่ม Normal 1-5 ของแมพใหม่
+local function debugProgressSnapshot(tag)
+    local maps = getOrderedStoryMapList()
+    local parts = {}
+    for _, map in ipairs(maps) do
+        local unlocked = isStoryMapUnlocked(map)
+        local cleared = isMapFullyCleared(map)
+        local actBits = {}
+        for _, act in ipairs(getStoryActs()) do
+            local ok = isActCleared(map, act, "Normal")
+            table.insert(actBits, ok and "✓" or "·")
+        end
+        table.insert(parts, string.format("%s[%s%s]%s", map,
+            unlocked and "U" or "-",
+            cleared and "C" or "-",
+            table.concat(actBits, "")))
+    end
+    print(("[AE Kaitun] Progress%s: %s | grind=%s"):format(
+        tag and (" " .. tostring(tag)) or "",
+        table.concat(parts, " | "),
+        tostring(isInGrindMode())
+    ))
+end
+
 local function refreshFarmTargetForLevel()
     local af = getAutoFarm()
-    if not af.ByLevel or not af.ClearEnabled then
-        -- ปิด Clear → ถ้าเปิด Grind ให้เข้า grind ได้เลย
-        if not af.ClearEnabled and af.LoopHardAct1AfterClear then
+    if not af.ClearEnabled then
+        if af.LoopHardAct1AfterClear then
             local st = getFarmState()
             if not st.grindMode and canEnterGrindMode() then
                 st.grindMode = true
@@ -386,33 +651,33 @@ local function refreshFarmTargetForLevel()
     local prev = st.activeMap
     local changed = false
 
-    -- grind ค้าง / เลเวลปลดแมพใหม่ที่ยังไม่เคลียร์ → บังคับออก Grind
-    if st.grindMode and af.GrindAfterClear then
-        if not isMapFullyCleared(map) then
-            st.grindMode = false
-            st.needProgressSettings = true
-            changed = true
-            print(("[AE Kaitun] ออก Grind — ต้อง Clear %s Normal 1-5 ก่อน (Lv %d)"):format(
-                map, getAccountLevel()
-            ))
-        end
+    -- ยังมี Story ให้เคลียร์ → ห้ามค้าง Grind (บั๊กเดิม: School ครบ → Grind School Act1)
+    if st.grindMode and af.GrindAfterClear and not areAllConfiguredStoryMapsCleared() then
+        st.grindMode = false
+        st.needProgressSettings = true
+        changed = true
+        print(("[AE Kaitun] ออก Grind — ยังมี Story ให้เคลียร์ เป้า=%s"):format(map))
     end
 
     if st.activeMap ~= map then
         st.activeMap = map
-        st.grindMode = false
+        if not areAllConfiguredStoryMapsCleared() then
+            st.grindMode = false
+        end
+        -- sync index ไปแมพใหม่ — act จะถูก syncFarm ตั้งจาก CompletedMaps
         st.mapIndex = 1
         st.actIndex = 1
         st.diffIndex = 1
         st.needProgressSettings = true
         changed = true
         if prev ~= nil then
-            print(("[AE Kaitun] เลเวล %d → เปลี่ยนแมพ Clear %s → %s (เริ่ม Normal Act 1-5)"):format(
-                getAccountLevel(), tostring(prev), map
+            print(("[AE Kaitun] เป้า Clear เปลี่ยน %s → %s (Lv %d)"):format(
+                tostring(prev), map, getAccountLevel()
             ))
         else
-            print(("[AE Kaitun] แมพ Clear อัตโนมัติ = %s (Lv %d)"):format(map, getAccountLevel()))
+            print(("[AE Kaitun] แมพ Clear ปัจจุบัน = %s (Lv %d)"):format(map, getAccountLevel()))
         end
+        debugProgressSnapshot("refresh")
     end
 
     return changed
@@ -427,9 +692,9 @@ local function enterGrindMode(reason)
         return false
     end
     st.grindMode = true
-    st.needProgressSettings = true -- ให้รอบถัดไปยิง AutoRetry / ปิด AutoNext ใหม่
+    st.needProgressSettings = true
     local g = getGrindStage()
-    print(("[AE Kaitun] Grind mode — ล็อก %s | %s | %s (ไม่ไปด่านถัดไป)%s"):format(
+    print(("[AE Kaitun] Grind mode — ล็อก %s | %s | %s (Story เคลียร์ครบทุกแมพ)%s"):format(
         g.MapName, g.ActName, g.Difficulty,
         reason and (" | " .. tostring(reason)) or ""
     ))
@@ -441,6 +706,11 @@ local function tryEnterGrindAfterMapClear()
         return false
     end
     if isInGrindMode() then
+        -- กันค้าง grind ผิดตอนยังมีแมพให้เคลียร์
+        if not canEnterGrindMode() then
+            getFarmState().grindMode = false
+            return false
+        end
         return true
     end
     if not canEnterGrindMode() then
@@ -453,45 +723,79 @@ local function tryEnterGrindAfterMapClear()
     elseif not af.GrindAfterClear then
         reason = "AfterClear ปิด — Grind ทันที"
     else
-        reason = getActiveStoryMap() .. " Clear ครบทุก Act"
+        reason = ("Story เคลียร์ครบ %d แมพ"):format(#getOrderedStoryMapList())
     end
     return enterGrindMode(reason)
 end
 
--- นับด่านของ Clear Map ที่ยังไม่เคลียร์ (ใช้ตอน AutoNext ในแมตช์ — Settings อาจยังเป็น Act 1)
+-- นับด่านที่ยังไม่เคลียร์ทั้งลิสต์ Story ที่ตั้งไว้
 local function countUnclearedGrindActs()
     if not getAutoFarm().ClearEnabled then
         return 0
     end
-    local clearMap = getActiveStoryMap()
+    local maps = getOrderedStoryMapList()
     local acts = getStoryActs()
     local diffs = getStoryDifficulties()
     local n = 0
-    for _, diff in ipairs(diffs) do
-        for _, act in ipairs(acts) do
-            if not isActCleared(clearMap, act, diff) then
-                n += 1
+    for _, mapName in ipairs(maps) do
+        for _, diff in ipairs(diffs) do
+            for _, act in ipairs(acts) do
+                if not isActCleared(mapName, act, diff) then
+                    n += 1
+                end
             end
         end
     end
     return n
 end
 
--- true = อย่า AutoNext (เหลือด่านสุดท้าย / เคลียร์ครบแล้ว → กลับ lobby แล้วเข้า Grind)
-local function shouldLockAutoNextForGrind()
-    if not getAutoFarm().LoopHardAct1AfterClear then
+-- กำลังเล่น Act สุดท้ายของแมพปัจจุบัน (เช่น School Act 5) → ต้องกลับ lobby คิวแมพถัดไป
+local function isPlayingLastActOfActiveMap()
+    if isInGrindMode() then
         return false
     end
+    if not getAutoFarm().ClearEnabled then
+        return false
+    end
+    local stage = select(1, getCurrentFarmStage())
+    if typeof(stage) ~= "table" or not stage.MapName then
+        return false
+    end
+    local acts = getStoryActs()
+    if #acts == 0 then
+        return false
+    end
+    local lastAct = acts[#acts]
+    if tostring(stage.ActName) ~= tostring(lastAct) then
+        return false
+    end
+    local diff = stage.Difficulty or "Normal"
+    for i = 1, #acts - 1 do
+        if not isActCleared(stage.MapName, acts[i], diff) then
+            return false
+        end
+    end
+    return true
+end
+
+-- ล็อก AutoNext เมื่อ: Grind / ด่านสุดท้ายทั้งลิสต์ / Act สุดท้ายของแมพ (กันวน School Act1)
+local function shouldLockAutoNextForGrind()
     if isInGrindMode() then
-        return true
+        return getAutoFarm().LoopHardAct1AfterClear and canEnterGrindMode()
     end
     if not getAutoFarm().ClearEnabled then
+        return getAutoFarm().LoopHardAct1AfterClear == true
+    end
+    if isPlayingLastActOfActiveMap() then
         return true
+    end
+    if not getAutoFarm().LoopHardAct1AfterClear then
+        return false
     end
     return countUnclearedGrindActs() <= 1
 end
 
-local function returnToLobbyFromMatch()
+local function returnToLobbyFromMatch(reason)
     local ok = pcall(function()
         local replica = Nodes.GET_GAME_REPLICA:InvokeSelf()
         if replica then
@@ -500,16 +804,13 @@ local function returnToLobbyFromMatch()
         end
     end)
     if ok then
-        print("[AE Kaitun] ส่งกลับ Lobby (รอเข้า Grind)")
+        print("[AE Kaitun] ส่งกลับ Lobby", reason and ("| " .. tostring(reason)) or "")
         return true
     end
-    ok = pcall(function()
-        return Actions.GameReturnLobby(true)
-    end)
-    return ok == true
+    warn("[AE Kaitun] กลับ Lobby ไม่สำเร็จ — ไม่มี GameReplica")
+    return false
 end
 
--- ตั้งด่านถัดไปจาก CompletedMaps (ข้ามด่านที่เคลียร์แล้ว)
 local function syncFarmStateFromProgress()
     if not getAutoFarm().Enabled then
         return true
@@ -517,14 +818,12 @@ local function syncFarmStateFromProgress()
 
     refreshFarmTargetForLevel()
 
-    -- โหมด Grind / ปิด Clear / AfterClear ปิด → เข้า grind ได้
     if tryEnterGrindAfterMapClear() or isInGrindMode() then
         return true
     end
 
     local af = getAutoFarm()
     if not af.ClearEnabled then
-        -- ไม่มี Clear → ต้องเข้า Grind หรือจบ
         if af.LoopHardAct1AfterClear then
             return enterGrindMode("ไม่มี Clear")
         end
@@ -535,29 +834,48 @@ local function syncFarmStateFromProgress()
     if not af.SkipCleared then
         return true
     end
+
     local maps = getStoryMaps()
     local acts = getStoryActs()
     local diffs = getStoryDifficulties()
     local st = getFarmState()
-    local clearMap = getActiveStoryMap()
+
+    -- ถ้า CompletedMaps ยังไม่ sync → อย่า reset ไป Act 1 ผิด
+    local story = getStoryCompletedMaps()
+    if typeof(story) ~= "table" then
+        warn("[AE Kaitun] CompletedMaps ยังไม่พร้อม — คงคิวเดิม รอ sync")
+        debugProgressSnapshot("no-cm")
+        return true
+    end
 
     for di, diff in ipairs(diffs) do
         for mi, mapName in ipairs(maps) do
             for ai, actName in ipairs(acts) do
                 if not isActCleared(mapName, actName, diff) then
-                    -- ถ้าเจอแมพถัดไปหลัง Clear Map เคลียร์ครบแล้ว → เข้า grind แทน
-                    if mapName ~= clearMap and isMapFullyCleared(clearMap, acts, diffs) then
-                        return enterGrindMode(clearMap .. " ครบแล้ว — ไม่ไปแมพอื่น")
-                    end
                     local changed = st.mapIndex ~= mi or st.actIndex ~= ai or st.diffIndex ~= di
                     st.mapIndex = mi
                     st.actIndex = ai
                     st.diffIndex = di
+                    st.activeMap = mapName
                     if changed then
-                        print(("[AE Kaitun] ข้ามด่านที่เคลียร์แล้ว → %s | %s | %s"):format(mapName, actName, diff))
+                        print(("[AE Kaitun] คิว Clear → %s | %s | %s"):format(mapName, actName, diff))
                     end
                     return true
                 end
+            end
+        end
+    end
+
+    -- แมพที่ปลดแล้วเคลียร์ครบ แต่ยังมีแมพถัดไปในลิสต์ที่ยังปลดไม่ได้? (ไม่ควรเกิดถ้า unlock=progression)
+    local ordered = getOrderedStoryMapList()
+    for _, mapName in ipairs(ordered) do
+        if not isMapFullyCleared(mapName) then
+            if isStoryMapUnlocked(mapName) then
+                -- ควรเจอในลูปบนแล้ว
+            else
+                print(("[AE Kaitun] แมพ %s ยังไม่ปลด — รอ progression (ไม่เข้า Grind)"):format(mapName))
+                debugProgressSnapshot("wait-unlock")
+                return true
             end
         end
     end
@@ -574,6 +892,7 @@ local function syncFarmStateFromProgress()
         return true
     end
     print("[AE Kaitun] เคลียร์ครบทุกด่านในลิสต์แล้ว")
+    debugProgressSnapshot("done")
     return false
 end
 
@@ -641,12 +960,6 @@ local function advanceFarmStage()
                 return false
             end
         end
-        -- จบแมพหนึ่งแล้ว ถ้าเป็น Clear Map ปัจจุบัน → เข้า grind
-        local finishedMap = maps[st.mapIndex - 1]
-        local clearMap = getActiveStoryMap()
-        if finishedMap == clearMap and tryEnterGrindAfterMapClear() then
-            return true
-        end
     end
     return true
 end
@@ -664,7 +977,15 @@ local function consumeFarmMatchReturn()
         return syncFarmStateFromProgress()
     end
     st.inMatch = false
-    print("[AE Kaitun] กลับจากแมตช์ → หาด่านถัดไปจาก CompletedMaps")
+    -- สำคัญ: ไม่ขยับคิวตาม "เคยเข้าแมตช์" — ใช้ CompletedMaps เท่านั้น
+    -- ถ้าแพ้ (lastVictory=false) ด่านเดิมยังไม่เคลียร์ → sync จะชี้ด่านเดิม → เข้าใหม่
+    if st.lastVictory == false then
+        print(("[AE Kaitun] กลับจากแมตช์หลังแพ้ (failStreak=%d) → คิวอยู่ด่านเดิม (CompletedMaps)"):format(
+            tonumber(st.failStreak) or 0
+        ))
+    else
+        print("[AE Kaitun] กลับจากแมตช์ → หาด่านถัดไปจาก CompletedMaps")
+    end
     return advanceFarmStage()
 end
 
@@ -695,6 +1016,11 @@ AutoFarmManager.getQueueSettings = getQueueSettings
 AutoFarmManager.getActiveStoryMap = getActiveStoryMap
 AutoFarmManager.getGrindMap = getGrindMap
 AutoFarmManager.getStoryMaps = getStoryMaps
+AutoFarmManager.getOrderedStoryMapList = getOrderedStoryMapList
+AutoFarmManager.isStoryMapUnlocked = isStoryMapUnlocked
+AutoFarmManager.areAllUnlockedStoryMapsCleared = areAllUnlockedStoryMapsCleared
+AutoFarmManager.areAllConfiguredStoryMapsCleared = areAllConfiguredStoryMapsCleared
+AutoFarmManager.debugProgressSnapshot = debugProgressSnapshot
 AutoFarmManager.getStoryActs = getStoryActs
 AutoFarmManager.getStoryDifficulties = getStoryDifficulties
 AutoFarmManager.getGrindStage = getGrindStage
@@ -714,5 +1040,8 @@ AutoFarmManager.advanceFarmStage = advanceFarmStage
 AutoFarmManager.markFarmEnteredMatch = markFarmEnteredMatch
 AutoFarmManager.consumeFarmMatchReturn = consumeFarmMatchReturn
 AutoFarmManager.buildQueueData = buildQueueData
+AutoFarmManager.markMatchResult = markMatchResult
+AutoFarmManager.restartCurrentMatch = restartCurrentMatch
+AutoFarmManager.nextStageFromMatch = nextStageFromMatch
 
 return AutoFarmManager

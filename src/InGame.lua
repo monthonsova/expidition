@@ -52,6 +52,10 @@ local tryEnterGrindAfterMapClear = AutoFarmManager.tryEnterGrindAfterMapClear
 local shouldLockAutoNextForGrind = AutoFarmManager.shouldLockAutoNextForGrind
 local getActiveStoryMap = AutoFarmManager.getActiveStoryMap
 local returnToLobbyFromMatch = AutoFarmManager.returnToLobbyFromMatch
+local markMatchResult = AutoFarmManager.markMatchResult
+local restartCurrentMatch = AutoFarmManager.restartCurrentMatch
+local nextStageFromMatch = AutoFarmManager.nextStageFromMatch
+local syncFarmStateFromProgress = AutoFarmManager.syncFarmStateFromProgress
 
 local placeRunning = false
 local lastPlaceAt = 0
@@ -131,7 +135,9 @@ local function applyStoryProgressSettings(force)
         print("[AE Kaitun] AutoRetry = on | AutoNext = off (ล็อก",
             getGrindStage().ActName, getGrindStage().MapName, ")")
     elseif mode == "farm_last" then
-        -- Act สุดท้าย — ห้าม AutoNext ไปแมพอื่น / ห้าม AutoRetry วนด่านเดิม
+        -- Act สุดท้าย — ห้าม AutoNext ไปแมพอื่น
+        -- AutoRetry ปิด: แพ้จะให้ SHOW_END_SCREEN handler ของเรา Restart เอง
+        -- ชนะ → handler / CompletedMaps poll ส่งกลับ lobby เข้า Grind
         pcall(function()
             Nodes.CLIENT_CHANGE_SETTING:FireServer("AutoRetry", false)
         end)
@@ -139,9 +145,10 @@ local function applyStoryProgressSettings(force)
         pcall(function()
             Nodes.CLIENT_CHANGE_SETTING:FireServer("AutoNext", false)
         end)
-        print("[AE Kaitun] AutoNext = off | AutoRetry = off (ด่านสุดท้ายก่อน Grind)")
+        print("[AE Kaitun] AutoNext = off | AutoRetry = off (ด่านสุดท้าย — Defeat เรา Restart เอง)")
     else
-        -- ฟาร์ม Act 1-5: ต้อง AutoNext ไปด่านถัดไป — ปิด AutoRetry กันวนซ้ำ
+        -- Clear Act 1-N: AutoNext ตอนชนะไปด่านถัดไป
+        -- AutoRetry ปิดกันเกม Restart ทับตอนชนะ — แพ้ให้ handler ของเรา Restart แทน
         pcall(function()
             Nodes.CLIENT_CHANGE_SETTING:FireServer("AutoRetry", false)
         end)
@@ -149,7 +156,7 @@ local function applyStoryProgressSettings(force)
         pcall(function()
             Nodes.CLIENT_CHANGE_SETTING:FireServer("AutoNext", true)
         end)
-        print("[AE Kaitun] AutoNext = on | AutoRetry = off (Farm All Story)")
+        print("[AE Kaitun] AutoNext = on | AutoRetry = off (Clear — Defeat เรา Restart เอง)")
     end
 end
 
@@ -701,6 +708,163 @@ local function autoPlaceUnits()
     end)
 end
 
+------------------------------------------------------------------------
+-- Defeat / Victory recovery (SHOW_END_SCREEN)
+-- ปัญหาเดิม: Clear mode ปิด AutoRetry → แพ้แล้วค้างหน้า Defeat จน AFK ตาย
+-- ทางออก: ฟัง SHOW_END_SCREEN เอง
+--   Defeat  → Restart ด่านเดิม (ไม่ขยับคิว)
+--   Victory → ปล่อย AutoNext / หรือกลับ lobby ถ้าด่านสุดท้ายก่อน Grind
+-- Soft-reset: แพ้ติดกันหลายครั้ง → กลับ lobby แล้วเข้าคิวใหม่ (เซิร์ฟใหม่)
+------------------------------------------------------------------------
+local endScreenHooked = false
+local endScreenHandling = false
+
+local function getFailSoftResetThreshold()
+    local n = tonumber(_G.Settings["Fail Soft Reset"])
+    if n == nil then
+        local af = _G.Settings["Auto Farm"]
+        if typeof(af) == "table" then
+            n = tonumber(af.FailSoftReset)
+        end
+    end
+    if n == nil or n < 0 then
+        n = 8 -- 0 = ปิด soft reset
+    end
+    return n
+end
+
+local function setupEndScreenHandler()
+    if endScreenHooked then
+        return
+    end
+    if not Nodes or not Nodes.SHOW_END_SCREEN then
+        warn("[AE Kaitun] ไม่พบ Nodes.SHOW_END_SCREEN — Defeat recovery ใช้ไม่ได้")
+        return
+    end
+    endScreenHooked = true
+
+    pcall(function()
+        Nodes.SHOW_END_SCREEN:Connect(function(result)
+            if typeof(result) ~= "table" then
+                return
+            end
+            if endScreenHandling then
+                return
+            end
+            endScreenHandling = true
+
+            task.spawn(function()
+                local okHandle, errHandle = pcall(function()
+                    local victory = result.Victory == true
+                    local restartDisabled = result.RestartDisabled == true
+                    local hasNext = result.HasNextStage == true
+                    local st = markMatchResult(victory)
+
+                    if victory then
+                        print(("[AE Kaitun] ★ Victory | wins=%d fails=%d | HasNext=%s"):format(
+                            st.totalWins or 0, st.totalFails or 0, tostring(hasNext)
+                        ))
+                        if getAutoFarm().Enabled then
+                            task.wait(1.2)
+                            applyStoryProgressSettings(true)
+                            -- เคลียร์แมพครบแล้ว → กลับ lobby เข้า Grind (ห้าม Next ไปแมพอื่น)
+                            if tryEnterGrindAfterMapClear() then
+                                print("[AE Kaitun] Victory ครบแมพ Clear — กลับ lobby → Grind")
+                                returnToLobbyFromMatch("victory→grind")
+                                return
+                            end
+                            -- ไม่มีด่านถัดไปในแมตช์นี้ → กลับ lobby sync แมพถัดไป (FlowerForest ฯลฯ)
+                            if not hasNext then
+                                print("[AE Kaitun] Victory ไม่มี Next ในแมตช์ — กลับ lobby sync คิว")
+                                task.wait(0.8)
+                                syncFarmStateFromProgress()
+                                if tryEnterGrindAfterMapClear() then
+                                    returnToLobbyFromMatch("victory→grind")
+                                else
+                                    returnToLobbyFromMatch("victory→next-map")
+                                end
+                                return
+                            end
+                            -- Mid-clear: รอ AutoNext ของเกม; ค้างหน้าผลนาน → Next เอง
+                            if not isInGrindMode() and not shouldLockAutoNextForGrind() then
+                                task.wait(4.5)
+                                local stillEnded = false
+                                pcall(function()
+                                    local gs = peek(Dependencies.GameState)
+                                    if typeof(gs) == "table" and gs.Active == false then
+                                        stillEnded = true
+                                    end
+                                end)
+                                if stillEnded and isInGame() then
+                                    print("[AE Kaitun] AutoNext ค้าง — บังคับ Next เอง")
+                                    nextStageFromMatch("victory fallback")
+                                    placeRunning = false
+                                end
+                            elseif shouldLockAutoNextForGrind() and isInGame() then
+                                -- Act สุดท้ายของแมพ / ด่านสุดท้ายทั้งลิสต์ → กลับ lobby คิวต่อ (ห้ามปล่อย AutoNext วน Act1)
+                                task.wait(1.2)
+                                syncFarmStateFromProgress()
+                                if tryEnterGrindAfterMapClear() then
+                                    returnToLobbyFromMatch("victory last-act→grind")
+                                else
+                                    returnToLobbyFromMatch("victory last-act→next-map")
+                                end
+                                return
+                            end
+                        end
+                    else
+                        print(("[AE Kaitun] ✗ Defeat | failStreak=%d totalFails=%d | RestartDisabled=%s"):format(
+                            st.failStreak or 0, st.totalFails or 0, tostring(restartDisabled)
+                        ))
+
+                        local softN = getFailSoftResetThreshold()
+                        -- Soft reset: แพ้ติดกันเยอะ → กลับ lobby + SmartPlay (สุ่ม/ทีม/ฟีด/evolve)
+                        if softN > 0 and (st.failStreak or 0) >= softN and getAutoFarm().Enabled then
+                            print(("[AE Kaitun] แพ้ติดกัน %d ครั้ง → Soft Reset + SmartPlay"):format(st.failStreak))
+                            st.needSmartPlay = true
+                            st.failStreak = 0
+                            syncFarmStateFromProgress()
+                            task.wait(0.6)
+                            returnToLobbyFromMatch("soft-reset after fails")
+                            return
+                        end
+
+                        if restartDisabled then
+                            print("[AE Kaitun] RestartDisabled — กลับ lobby + SmartPlay แล้วเข้าคิวด่านเดิมใหม่")
+                            st.needSmartPlay = true
+                            syncFarmStateFromProgress()
+                            task.wait(0.5)
+                            returnToLobbyFromMatch("restart disabled")
+                            return
+                        end
+
+                        -- Restart ด่านเดิม (ไม่ขยับคิว — CompletedMaps ยังไม่เคลียร์)
+                        task.wait(1.4)
+                        if not isInGame() then
+                            return
+                        end
+                        placeRunning = false
+                        restartCurrentMatch(("defeat streak=%d"):format(st.failStreak or 0))
+                        -- กัน Intermission signal ซ้ำค่าเดิมแล้วไม่วางใหม่ → บังคับ Place หลังรีสตาร์ท
+                        task.delay(3.5, function()
+                            if isInGame() and not placeRunning then
+                                print("[AE Kaitun] หลัง Restart — บังคับ Place ใหม่")
+                                autoPlaceUnits()
+                            end
+                        end)
+                    end
+                end)
+                if not okHandle then
+                    warn("[AE Kaitun] EndScreen handler error:", errHandle)
+                end
+                task.wait(0.5)
+                endScreenHandling = false
+            end)
+        end)
+    end)
+    print("[AE Kaitun] EndScreen handler = on (Defeat→Restart / SoftReset)")
+end
+
 local inGameStarted = false
 local function runInGame()
     if inGameStarted then
@@ -714,6 +878,7 @@ local function runInGame()
     task.spawn(boostFPS)
     task.spawn(applyUnitSettings)
     setupAutoVoteStart()
+    setupEndScreenHandler()
     -- ตรวจ CompletedMaps ทุกครั้งที่เข้าแมตช์ (กัน AutoNext ไปแมพอื่นหลัง Act 5)
     if getAutoFarm().Enabled then
         applyStoryProgressSettings(true)
@@ -792,9 +957,9 @@ local function runInGame()
                 -- เคลียร์แมพปัจจุบันครบแล้วแต่ยังอยู่ในแมตช์ → กลับ lobby เข้า Grind
                 elseif not wasGrind and tryEnterGrindAfterMapClear() and not returnedForGrind then
                     returnedForGrind = true
-                    print("[AE Kaitun] แมพครบแล้ว — กลับ lobby เพื่อเข้า Hard Act 1")
+                    print("[AE Kaitun] Story เคลียร์ครบทุกแมพ — กลับ lobby เข้า Grind")
                     task.wait(0.5)
-                    returnToLobbyFromMatch()
+                    returnToLobbyFromMatch("poll→grind")
                 elseif not isInGrindMode() then
                     -- ย้ำปิด AutoRetry ระหว่างฟาร์ม Act 1-5 กันวนด่านเดิม
                     pcall(function()
@@ -865,6 +1030,7 @@ InGame.applyUnitSettings = applyUnitSettings
 InGame.enableAutoVoteSetting = enableAutoVoteSetting
 InGame.acceptVoteReplica = acceptVoteReplica
 InGame.setupAutoVoteStart = setupAutoVoteStart
+InGame.setupEndScreenHandler = setupEndScreenHandler
 InGame.autoPlaceUnits = autoPlaceUnits
 InGame.runInGame = runInGame
 

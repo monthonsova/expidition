@@ -48,9 +48,28 @@ local defaultSettings = {
     ["Team Index"] = 1,
     ["Include Equipment"] = true,
 
+    -- Mythic = จัดทีม Mythic อัตโนมัติ (แนะนำ) | Units = ตามลิสต์ | Best = rarity+เลเวลสูงสุด
+    ["Team Mode"] = "Mythic",
+    ["Smart Mythic Team"] = {
+        Enabled = true,
+        PreferMythic = true,
+        FillWithLegendary = true, -- ช่องเหลือเติม Legendary คนละตัว
+        ReplaceWeakUnits = true, -- มี Mythic แล้วถอดตัวอ่อนในลิสต์ Units ออก
+        PreferShiny = true,
+        PreferHighWorthiness = true,
+    },
+
+    -- ใช้ตอน Team Mode = "Units" หรือเป็น fallback ถ้ายังไม่มี Mythic/Leg
     ["Units"] = {
         "Ichiraku", -- UI: Ramen Guy
         "Riyo",     -- UI: Scissor
+    },
+
+    -- เป้าสุ่ม Mythic คนละตัว (หยุดเมื่อครบ หรือครบ Legendary ตามด้านบน)
+    ["Summon Unique Mythic"] = {
+        { MinLevel = 1,  Count = 1 },
+        { MinLevel = 15, Count = 2 },
+        { MinLevel = 30, Count = 3 },
     },
 
     -- คิวเริ่มเกม
@@ -68,17 +87,21 @@ local defaultSettings = {
         Clear = {
             Enabled = true,
             ByLevel = true,
+            -- ProgressionIndex เกมจริง: 1 School → 2 Flower → 3 Dressrosa → 4 FairyKing → 5 KingsTomb
+            -- MinLevel = เกณฑ์เสริม (ปลดจริงดู CompletedMaps / HasMapUnlocked)
             MapsByLevel = {
                 { MinLevel = 1,  Map = "SchoolGrounds" },
                 { MinLevel = 15, Map = "FlowerForest" },
                 { MinLevel = 30, Map = "Dressrosa" },
+                { MinLevel = 45, Map = "FairyKingForest" },
+                { MinLevel = 60, Map = "KingsTomb" },
             },
             Maps = {
                 "SchoolGrounds",
                 "FlowerForest",
                 "Dressrosa",
-                "KingsTomb",
                 "FairyKingForest",
+                "KingsTomb",
             },
             Acts = { "Act 1", "Act 2", "Act 3", "Act 4", "Act 5" },
             Difficulties = { "Normal" },
@@ -89,10 +112,34 @@ local defaultSettings = {
         Grind = {
             Enabled = true,
             AfterClear = true,
-            Map = "SchoolGrounds",
+            -- nil = ใช้แมพ Story สุดท้ายที่เคลียร์แล้ว (อย่า hardcode School Act1)
+            Map = nil,
             Act = "Act 1",
             Difficulty = "Hard",
         },
+
+        -- แพ้ติดกันกี่ครั้งแล้ว soft-reset (กลับ lobby คิวเดิมบนเซิร์ฟใหม่) — 0 = ปิด
+        FailSoftReset = 8,
+    },
+
+    -- alias ระดับบน (อ่านได้ทั้งสองที่)
+    ["Fail Soft Reset"] = 8,
+
+    -- แพ้ติด / soft-reset → SmartPlay: เคลียร์กระเป๋า → สุ่ม → ฟีด/evolve → ทีมใหม่
+    ["Smart Play Enabled"] = true,
+    ["Smart Play"] = {
+        Enabled = true,
+        OnFailSoftReset = true,
+        OnLobbyReturnAfterFail = true,
+        SellWhenFreeSlotsBelow = 15, -- ว่างน้อยกว่านี้ → ขาย Rare/Epic
+        SellDuplicateLegendaries = true, -- true = ขาย Legendary ซ้ำ Asset (เก็บเลเวลสูงสุด)
+        SummonRounds = 3,
+        SummonAmount = 10,
+        FeedEquipped = true,
+        FeedFoodPerUnit = 25,
+        TryEvolve = true,
+        RemakeTeam = true,
+        PreferBestUnits = true, -- ใส่ Mythic/Legendary เลเวลสูงสุดแทนลิสต์ Units เดิม
     },
 
     ["Use Matchmaking"] = false,

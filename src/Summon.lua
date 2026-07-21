@@ -184,13 +184,21 @@ local function getMythicUnitsInBag()
                     ID = id,
                     Asset = u.Asset,
                     Level = tonumber(u.Level) or 1,
+                    Worthiness = tonumber(u.Worthiness) or 0,
+                    Shiny = u.Shiny == true,
                     Rarity = "Mythic",
                 })
             end
         end
     end
     table.sort(list, function(a, b)
-        return a.Level > b.Level
+        if a.Shiny ~= b.Shiny then
+            return a.Shiny
+        end
+        if a.Level ~= b.Level then
+            return a.Level > b.Level
+        end
+        return a.Worthiness > b.Worthiness
     end)
     return list
 end
@@ -206,6 +214,42 @@ local function getSummonTeamUnitsInBag()
         table.insert(list, u)
     end
     return list, #mythics, #legendaries
+end
+
+-- นับ Mythic คนละตัว (Asset ไม่ซ้ำ)
+local function countUniqueMythicsInBag()
+    local seen = {}
+    local n = 0
+    for _, u in ipairs(getMythicUnitsInBag()) do
+        local asset = tostring(u.Asset)
+        if not seen[asset] then
+            seen[asset] = true
+            n += 1
+        end
+    end
+    return n
+end
+
+-- เป้า Mythic คนละตัวตามเลเวล
+local function getSummonStopUniqueMythic()
+    local lvl = getAccountLevel()
+    local rows = _G.Settings["Summon Unique Mythic"]
+    if typeof(rows) ~= "table" or #rows == 0 then
+        return (lvl >= 30) and 3 or ((lvl >= 15) and 2 or 1)
+    end
+    local bestCount = 1
+    local bestMin = -1
+    for _, row in ipairs(rows) do
+        if typeof(row) == "table" then
+            local minLv = tonumber(row.MinLevel) or 1
+            local count = tonumber(row.Count) or 1
+            if lvl >= minLv and minLv >= bestMin then
+                bestMin = minLv
+                bestCount = math.max(0, count)
+            end
+        end
+    end
+    return bestCount
 end
 
 local function getItemAmount(itemName)
@@ -438,6 +482,62 @@ local function autoSellBagUnits()
     return sellBagByRarities(_G.Settings["Sell Bag Rarities"])
 end
 
+local function countUnitBag()
+    local n = 0
+    local data = getPlayerData()
+    local unitData = data and data.UnitData
+    if typeof(unitData) ~= "table" then
+        return 0
+    end
+    for _, u in pairs(unitData) do
+        if typeof(u) == "table" and u.Asset then
+            n += 1
+        end
+    end
+    return n
+end
+
+local function getUnitBagLimit()
+    local base = 100
+    local expansions = 0
+    pcall(function()
+        local Information = getCachedInformation()
+        if Information and Information.AssetTypes and Information.AssetTypes.Unit then
+            local lim = Information.AssetTypes.Unit.InventoryLimit
+            if lim then
+                base = tonumber(lim.Limit) or base
+            end
+        elseif Information and tonumber(Information.UnitInventoryLimit) then
+            base = tonumber(Information.UnitInventoryLimit)
+        end
+    end)
+    pcall(function()
+        local data = peek(Dependencies.PlayerData)
+        if typeof(data) ~= "table" then
+            data = getPlayerData()
+        end
+        if typeof(data) == "table" and typeof(data.InventoryExpansions) == "table" then
+            expansions = tonumber(data.InventoryExpansions.Unit) or 0
+        end
+    end)
+    return base + expansions
+end
+
+local function ensureBagSpaceBeforeSummon(minFree)
+    minFree = minFree or 12
+    local free = getUnitBagLimit() - countUnitBag()
+    if free >= minFree then
+        return free
+    end
+    print(("[AE Kaitun] กระเป๋าใกล้เต็ม (%d/%d free=%d) — ขายก่อนสุ่ม"):format(
+        countUnitBag(), getUnitBagLimit(), free
+    ))
+    -- บังคับขาย Rare/Epic แม้ Auto Sell ปิด (กันสุ่มไม่ได้ตอนกระเป๋าเต็ม)
+    sellBagByRarities(_G.Settings["Sell Bag Rarities"] or { "Rare", "Epic" })
+    task.wait(0.8)
+    return getUnitBagLimit() - countUnitBag()
+end
+
 -- ช่อง hotbar ที่เปิดแล้ว (ไม่ Disabled / หรือเลเวลผู้เล่นถึงแล้ว)
 
 local function summonBanner(banner, amount)
@@ -472,14 +572,29 @@ local function autoSummonAfterCodes()
     enableFastSummonAlways()
     startAutoCloseSummonResults()
 
-    local stopAt = getSummonStopUniqueLegendary()
-    local already = countUniqueLegendariesInBag()
+    local stopLeg = getSummonStopUniqueLegendary()
+    local stopMythic = getSummonStopUniqueMythic()
+    local haveLeg = countUniqueLegendariesInBag()
+    local haveMythic = countUniqueMythicsInBag()
     local lvl = getAccountLevel()
-    if already >= stopAt then
-        print("[AE Kaitun] มี Legendary คนละตัวแล้ว", already, "/", stopAt, "(Lv", lvl, ") — ข้ามสุ่ม")
+    local teamMode = tostring(_G.Settings["Team Mode"] or "Mythic")
+
+    local function shouldStopSummonMythicFirst()
+        if teamMode == "Mythic" and stopMythic > 0 then
+            return haveMythic >= stopMythic
+        end
+        return haveLeg >= stopLeg
+    end
+
+    if shouldStopSummonMythicFirst() then
+        print(("[AE Kaitun] เป้าสุ่มครบ UniqueMythic=%d/%d UniqueLeg=%d/%d (Lv %d) — ข้ามสุ่ม"):format(
+            haveMythic, stopMythic, haveLeg, stopLeg, lvl
+        ))
         local Team = getTeamModule()
-        Team.equipLegendariesToHotbar()
-        if #(_G.Settings["Units"] or {}) > 0 then
+        if Team.ensureMythicTeam then
+            Team.ensureMythicTeam()
+        else
+            Team.equipLegendariesToHotbar()
             Team.fillEmptyHotbarWithLegendaries()
         end
         return
@@ -490,10 +605,12 @@ local function autoSummonAfterCodes()
     local rounds = tonumber(_G.Settings["Summon Rounds"]) or 8
     local delaySec = math.max(tonumber(_G.Settings["Summon Delay"]) or 4, 2)
 
-    print("[AE Kaitun] Summon", banner, "×" .. amount, "สูงสุด", rounds, "รอบ")
-    print("[AE Kaitun] เป้า Legendary คนละตัว =", stopAt, "| มีแล้ว", already, "| Lv", lvl)
-    print("[AE Kaitun] ถ้าได้ Mythic จะใส่ฮอตบาร์ด้วย (ก่อน Legendary)")
+    print("[AE Kaitun] Summon", banner, "×" .. amount, "สูงสุด", rounds, "รอบ | TeamMode=", teamMode)
+    print(("[AE Kaitun] เป้า Unique Mythic=%d | Unique Leg=%d | มีแล้ว M=%d L=%d | Lv %d"):format(
+        stopMythic, stopLeg, haveMythic, haveLeg, lvl
+    ))
     printBannerMythics(banner)
+    ensureBagSpaceBeforeSummon(amount + 5)
     task.wait(1)
 
     for i = 1, rounds do
@@ -501,14 +618,24 @@ local function autoSummonAfterCodes()
             break
         end
 
-        local have = countUniqueLegendariesInBag()
-        local mythicHave = #getMythicUnitsInBag()
-        if have >= stopAt then
-            print("[AE Kaitun] Legendary คนละตัวครบ", have, "/", stopAt, "— หยุดสุ่ม")
+        haveLeg = countUniqueLegendariesInBag()
+        haveMythic = countUniqueMythicsInBag()
+        if shouldStopSummonMythicFirst() then
+            print(("[AE Kaitun] เป้าสุ่มครบ M=%d/%d L=%d/%d — หยุดสุ่ม"):format(
+                haveMythic, stopMythic, haveLeg, stopLeg
+            ))
             break
         end
 
-        print("[AE Kaitun] Summon round", i, "/", rounds, "| Unique Leg=", have, "/", stopAt, "| Mythic=", mythicHave)
+        ensureBagSpaceBeforeSummon(amount + 2)
+        if (getUnitBagLimit() - countUnitBag()) < 3 then
+            warn("[AE Kaitun] กระเป๋ายังเต็มหลังขาย — หยุดสุ่ม")
+            break
+        end
+
+        print(("[AE Kaitun] Summon round %d/%d | Unique M=%d/%d L=%d/%d"):format(
+            i, rounds, haveMythic, stopMythic, haveLeg, stopLeg
+        ))
         summonBanner(banner, amount)
 
         for _ = 1, math.max(1, math.floor(delaySec / 0.5)) do
@@ -516,15 +643,14 @@ local function autoSummonAfterCodes()
             closeSummonUiNow()
         end
 
-        -- รอ UnitData sync แล้วเช็คอีกครั้ง
         task.wait(0.8)
-        have = countUniqueLegendariesInBag()
-        mythicHave = #getMythicUnitsInBag()
-        if mythicHave > 0 then
-            print("[AE Kaitun] มี Mythic ในกระเป๋า", mythicHave, "ตัว — จะใส่ฮอตบาร์หลังจบสุ่ม")
+        haveLeg = countUniqueLegendariesInBag()
+        haveMythic = countUniqueMythicsInBag()
+        if haveMythic > 0 then
+            print("[AE Kaitun] มี Mythic คนละตัว", haveMythic, "ตัวในกระเป๋า")
         end
-        if have >= stopAt then
-            print("[AE Kaitun] Legendary คนละตัวครบ", have, "/", stopAt, "หลังรอบ", i, "— หยุดสุ่ม")
+        if shouldStopSummonMythicFirst() then
+            print(("[AE Kaitun] เป้าสุ่มครบหลังรอบ %d — หยุด"):format(i))
             break
         end
     end
@@ -532,9 +658,10 @@ local function autoSummonAfterCodes()
     closeSummonUiNow()
     task.wait(0.5)
     local Team = getTeamModule()
-    Team.equipLegendariesToHotbar()
-    -- มี Units ใน Settings → เติมช่องว่างด้วย Mythic ก่อน แล้ว Legendary
-    if #(_G.Settings["Units"] or {}) > 0 then
+    if Team.ensureMythicTeam then
+        Team.ensureMythicTeam()
+    else
+        Team.equipLegendariesToHotbar()
         Team.fillEmptyHotbarWithLegendaries()
     end
 end
@@ -550,6 +677,8 @@ Summon.countLegendariesInBag = countLegendariesInBag
 Summon.countUniqueLegendariesInBag = countUniqueLegendariesInBag
 Summon.getSummonStopUniqueLegendary = getSummonStopUniqueLegendary
 Summon.getMythicUnitsInBag = getMythicUnitsInBag
+Summon.countUniqueMythicsInBag = countUniqueMythicsInBag
+Summon.getSummonStopUniqueMythic = getSummonStopUniqueMythic
 Summon.getSummonTeamUnitsInBag = getSummonTeamUnitsInBag
 Summon.getItemAmount = getItemAmount
 Summon.countUnitsByRarity = countUnitsByRarity
@@ -562,5 +691,8 @@ Summon.autoSummonAfterCodes = autoSummonAfterCodes
 Summon.getBagUnitsByRarities = getBagUnitsByRarities
 Summon.sellBagByRarities = sellBagByRarities
 Summon.autoSellBagUnits = autoSellBagUnits
+Summon.countUnitBag = countUnitBag
+Summon.getUnitBagLimit = getUnitBagLimit
+Summon.ensureBagSpaceBeforeSummon = ensureBagSpaceBeforeSummon
 
 return Summon

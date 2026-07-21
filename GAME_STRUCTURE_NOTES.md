@@ -98,6 +98,9 @@ ReplicatedStorage
 | `CLIENT_CHANGE_SETTING` | `:FireServer(key, value)` | `InGame.lua` |
 | `CLIENT_TOGGLE_AUTO_SKIP_WAVES` | `:FireServer()` | `InGame.lua` |
 | `PROMPT_CLOSE`, `PROMPT_CLOSE_ALL`, `PROMPT_CLOSED`, `PROMPT_OBTAINED_REWARD_SLOTS`, `PROMPT_OBTAINED_REWARDS` | ต่างๆ | `Summon.lua` |
+| `UNIT_FEED` | `:FireServer(unitId, { [foodItem]=amount })` | `SmartPlay.lua` |
+| `TRY_EVOLVING_UNIT` | `:Request(unitId, evolvedAsset):Timeout(5):Wait()` | `SmartPlay.lua` |
+| `SHOW_END_SCREEN` | `:Connect(result)` — Defeat/Victory recovery | `InGame.lua` |
 
 ---
 
@@ -130,7 +133,82 @@ ReplicatedStorage
 - `InGame.lua: isGameActive()` → อ่าน `peek(Dependencies.GameState).Active` ตรงๆ (เทียบเท่า `KeyOf(GameState, "Active")`)
 - `InGame.lua: clearHotbarSelection()` → ใช้ `Dependencies.scope:GetState("SelectedHotbarIndex"):set(nil)` (named-state ของ Fusion "State" extension เรียกจาก scope ไหนก็ได้ค่าเดียวกัน ยืนยันจาก UI หลายที่ในเกมเรียกชื่อนี้แล้วได้ตัวเดียวกัน)
 
+**ระดับความรุนแรง:** `isInGame()` (`Replicas.lua`) ถูกเรียกเป็นจุดแรกสุดใน `init.lua` (บรรทัด `if Replicas.isInGame() then ... else ...`) และเป็นแกนของ `FarmLoop.lua` ทั้งไฟล์ (`waitUntilInGame`, `waitUntilBackToLobby`, เงื่อนไขหลักของลูป) โดย**ไม่มี `pcall` ครอบ** — ตอน `Shared.IsInGame` ชี้ผิด (ไม่มี field นี้บน Folder) การ index แบบนี้จะ **throw error ทันทีที่เรียกครั้งแรก** ("IsInGame is not a valid member of Folder") ทำให้ทั้ง `task.spawn` หลักใน `init.lua` ตายตั้งแต่บรรทัดแรกๆ — เท่ากับสคริปต์ทั้งชุด **ไม่ทำงานอะไรเลยตั้งแต่ต้น** ไม่ใช่แค่ auto-farm พังเฉยๆ — ถือเป็นบั๊กที่ร้ายแรงที่สุดที่เจอในรอบตรวจนี้ (คู่กับบั๊ก `Replica` folder ผิดจากรอบก่อน)
+
 **บั๊กเดียวกันอีกจุด:** `Rewards.lua: getAchievementCategories()` เดิมพยายาม `Shared.Information.Quests:GetChildren()` — ผิดทั้ง path (`Shared` โฟลเดอร์ไม่มี `.Quests`) และ `Information` ต้อง `require()` ก่อนด้วย → แก้เป็นคืนลิสต์ชื่อ 5 หมวดตรงๆ (ยืนยันแล้วว่าตรงกับ ModuleScript จริงในเกมทั้ง 5 ชื่อ: `Achievement_Collector/Story/Raid/Secret/Expeditions`) ตัดการสแกน children ที่เสี่ยงพังออก
+
+## 6c. Defeat / ไม่ผ่านด่าน — วิเคราะห์ + ทางออก (อัปเดตแล้วในโค้ด)
+
+### พฤติกรรมเกมจริง (จาก GameResults + settings)
+- จบแมตช์ → `Nodes.SHOW_END_SCREEN` ส่ง `ResultData` มีอย่างน้อย: `Victory`, `HasNextStage`, `RestartDisabled`, `Rewards`, …
+- ปุ่ม UI: **Next** = `Actions.GameNext` → `GameReplica:FireServer("Next")` (โชว์เฉพาะตอน `Victory` + `HasNextStage`)
+- ปุ่ม **Repeat** = `Actions.GameRestart(true)` → `FireServer("Restart")` (ข้าม confirmation ถ้าส่ง `true`)
+- ปุ่ม **Lobby** = `Actions.GameReturnLobby` → **เปิด confirmation เสมอ** (ห้ามเรียกจาก AFK) ต้อง `FireServer("Lobby")` ตรงๆ
+- Settings: `AutoRetry` = "Automatically restart the game", `AutoNext` = "Automatically start the next stage" (น่าจะฝั่งเซิร์ฟอ่านตอนจบ — client มีแค่ toggle)
+
+### บั๊ก AFK เดิม
+Clear mode ตั้ง `AutoNext=on` + `AutoRetry=off` → **ชนะไปต่อได้ แต่แพ้แล้วค้างหน้า Defeat** จน `waitUntilBackToLobby` timeout 30 นาที
+
+### ทางออกที่ลงโค้ดแล้ว
+1. `InGame.setupEndScreenHandler` ฟัง `SHOW_END_SCREEN`
+   - **Defeat** → `markMatchResult(false)` → `restartCurrentMatch()` (FireServer Restart) คิวไม่ขยับ
+   - **Victory + เคลียร์แมพครบ** → กลับ lobby เข้า Grind
+   - **Victory + AutoNext ค้าง** → บังคับ `Next` เองหลัง ~4.5 วิ
+   - **แพ้ติดกัน ≥ FailSoftReset (default 8)** → กลับ lobby คิวเดิม (เซิร์ฟใหม่)
+2. `consumeFarmMatchReturn` / `syncFarmStateFromProgress` อิง `CompletedMaps` อย่างเดียว → แพ้แล้วไม่ข้ามด่าน
+3. `returnToLobbyFromMatch` ตัด fallback `Actions.GameReturnLobby` ทิ้ง (มันเด้ง confirm)
+
+### Config
+- `Auto Farm.FailSoftReset` / `Settings["Fail Soft Reset"]` = 8 (ตั้ง 0 เพื่อปิด)
+
+## 6d. SmartPlay — แพ้ติด → สุ่มทีมใหม่ / ฟีด / evolve / กระเป๋าเต็ม (อัปเดตแล้ว)
+
+### APIs จากเกมจริง
+| เรื่อง | หลักฐาน |
+|---|---|
+| กระเป๋ายูนิต base **100** / max **500** | `Information.UnitInventoryLimit` + `AssetTypes.Unit.InventoryLimit` |
+| ขยายช่อง | `PlayerData.InventoryExpansions.Unit` บวกเข้า base |
+| ขาย | `ASSET_SELL_TABLE("Unit", idMap)` / `UNIT_SELL_TABLE` |
+| ฟีด EXP | `UNIT_FEED:FireServer(unitId, { [foodItem]=amount })` — อาหาร = item ที่มี `.EXP` (เช่น FoodItem1) |
+| Evolve | `TRY_EVOLVING_UNIT:Request(unitId, evolvedAsset):Timeout(5):Wait()` — recipe จาก `Information.Evolutions` |
+
+### Flow หลังแพ้ติด ≥ FailSoftReset
+1. `InGame` ตั้ง `needSmartPlay=true` → `Lobby`
+2. `FarmLoop` เรียก `SmartPlay.consumeIfNeeded`
+3. `SmartPlay.runRecovery`: ขาย Rare/Epic ถ้า free slots น้อย → สุ่ม 3 รอบ → `Team.remakeBestTeam` (Mythic/Leg เลเวลสูงสุด คนละ Asset) → ฟีดยูนิตในทีม → ลอง evolve ถ้าวัตถุดิบครบ → ใส่ทีมอีกรอบ
+4. คิวด่านเดิมจาก `CompletedMaps` (ไม่ข้าม)
+
+### Config
+```lua
+["Smart Play"] = {
+  Enabled = true,
+  SellWhenFreeSlotsBelow = 15,
+  SummonRounds = 3,
+  FeedEquipped = true,
+  TryEvolve = true,
+  PreferBestUnits = true,
+  SellDuplicateLegendaries = false,
+}
+```
+Debug: `AEKaitun.SmartPlay()`, `AEKaitun.SmartPlayBag()`, `AEKaitun.RemakeBestTeam()`
+
+## 6e. Clear ครบทุก Story แล้วทำอะไร (อัปเดต)
+
+ลำดับแมพ Story จริง (ProgressionIndex):
+1. SchoolGrounds → 2. FlowerForest → 3. Dressrosa → 4. FairyKingForest → 5. KingsTomb
+
+**ของเดิม (บั๊ก):** `ByLevel` คืนแมพเดียว + เข้า Grind ทันทีหลังเคลียร์แมพนั้น + มีโค้ด `"ไม่ไปแมพอื่น"` → ไม่เคยไป FairyKing/KingsTomb
+
+**ตอนนี้:**
+- Clear ไล่ทุกแมพที่ปลดแล้ว (ปลดจาก `HasMapUnlocked` / แมพก่อนหน้าเคลียร์ครบ + MinLevel)
+- เข้า **Grind** (Hard Act 1 วนฟาร์มเพชร) **เมื่อเคลียร์ครบทุกแมพที่ปลดแล้วเท่านั้น**
+- ถ้าเลเวลขึ้นแล้วปลดแมพใหม่ระหว่าง Grind → ออก Grind แล้ว Clear ต่อ
+
+### Config MapsByLevel
+```
+Lv1 SchoolGrounds → Lv15 FlowerForest → Lv30 Dressrosa → Lv45 FairyKingForest → Lv60 KingsTomb
+```
+(MinLevel เป็นเกณฑ์เสริม — ปลดจริงหลักคือ progression ของเกม)
 
 ## 7. จุดที่ยังเป็นข้อสังเกต (ความเสี่ยงต่ำ ไม่ได้แก้เพราะมี fallback ครอบอยู่แล้ว)
 

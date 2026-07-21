@@ -8,6 +8,7 @@ local Replicas = _G.AEKaitun_Loader and _G.AEKaitun_Loader.require("src/Replicas
 local AutoFarmManager = _G.AEKaitun_Loader and _G.AEKaitun_Loader.require("src/AutoFarmManager.lua") or loadstring(readfile("expidition/src/AutoFarmManager.lua"))()
 local Lobby = _G.AEKaitun_Loader and _G.AEKaitun_Loader.require("src/Lobby.lua") or loadstring(readfile("expidition/src/Lobby.lua"))()
 local InGame = _G.AEKaitun_Loader and _G.AEKaitun_Loader.require("src/InGame.lua") or loadstring(readfile("expidition/src/InGame.lua"))()
+local SmartPlay = _G.AEKaitun_Loader and _G.AEKaitun_Loader.require("src/SmartPlay.lua") or loadstring(readfile("expidition/src/SmartPlay.lua"))()
 
 local isInGame = Replicas.isInGame
 local getAccountLevel = Replicas.getAccountLevel
@@ -79,6 +80,21 @@ local function runStoryFarmLoop()
     end
 
     print("[AE Kaitun] Farm All Story — Clear ตามเลเวล / Grind หลังครบ")
+    -- หลัง teleport soft-reset flag ค้างใน getgenv → รัน SmartPlay ก่อนคิวด่านแรก
+    pcall(function()
+        SmartPlay.consumeIfNeeded("farm-loop-start")
+    end)
+    -- กัน grind ค้างจากบั๊กรอบก่อน (School Act1 Hard วน)
+    pcall(function()
+        local st = getFarmState()
+        if st.grindMode and not AutoFarmManager.canEnterGrindMode() then
+            st.grindMode = false
+            print("[AE Kaitun] เคลียร์ grindMode ค้าง — กลับไป Clear Story ต่อ")
+        end
+        if AutoFarmManager.debugProgressSnapshot then
+            AutoFarmManager.debugProgressSnapshot("loop-start")
+        end
+    end)
     refreshFarmTargetForLevel()
     do
         local af = getAutoFarm()
@@ -169,6 +185,10 @@ local function runStoryFarmLoop()
         task.wait(2)
 
         if back or not isInGame() then
+            -- Soft-reset / แพ้ติด → SmartPlay ก่อนคิวใหม่
+            pcall(function()
+                SmartPlay.consumeIfNeeded("lobby-return")
+            end)
             if not consumeFarmMatchReturn() then
                 print("[AE Kaitun] Farm All Story เสร็จแล้ว")
                 break
