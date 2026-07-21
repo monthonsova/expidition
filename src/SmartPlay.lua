@@ -206,7 +206,8 @@ local function getEquippedUnitEntries()
 	return list
 end
 
-local function feedEquippedUnits(cfg)
+local function feedEquippedUnits(cfg, opts)
+	opts = opts or {}
 	if not cfg.FeedEquipped or isInGame() then
 		return 0
 	end
@@ -216,13 +217,19 @@ local function feedEquippedUnits(cfg)
 		return 0
 	end
 	local maxLv = getUnitMaxLevel()
+	-- feed เชิงรุก: feed เฉพาะตัวที่ยังต่ำกว่า belowLevel (carry Lvl ต่ำจะได้ก่อน)
+	local belowLevel = tonumber(opts.belowLevel)
 	local units = getEquippedUnitEntries()
 	local fed = 0
-	local perUnit = cfg.FeedFoodPerUnit
+	local perUnit = opts.perUnit or cfg.FeedFoodPerUnit
 
 	for _, unit in ipairs(units) do
 		if unit.Level >= maxLv then
 			continue
+		end
+		if belowLevel and unit.Level >= belowLevel then
+			-- เรียงจากต่ำ→สูงอยู่แล้ว ตัวถัดไปสูงกว่า → หยุดได้เลย
+			break
 		end
 		-- เลือกอาหารที่ยังมีของ
 		local foodMap = {}
@@ -581,7 +588,23 @@ local function consumeIfNeeded(reason)
 	return false
 end
 
+-- feed เชิงรุก: level ยูนิตในทีมที่ยังต่ำ (carry Lvl 1) โดยไม่ต้องรอแพ้ติด
+-- เรียกทุกรอบกลับ lobby — feed เฉพาะตัวต่ำกว่า Feed Team Below Level
+local function feedTeamProactive()
+	if _G.Settings["Auto Feed Team"] == false or isInGame() then
+		return 0
+	end
+	local cfg = getSmartCfg()
+	if not cfg.FeedEquipped then
+		return 0
+	end
+	local below = tonumber(_G.Settings["Feed Team Below Level"]) or 10
+	local perUnit = tonumber(_G.Settings["Feed Team Food Per Unit"]) or (cfg.FeedFoodPerUnit * 4)
+	return feedEquippedUnits(cfg, { belowLevel = below, perUnit = perUnit })
+end
+
 SmartPlay.getSmartCfg = getSmartCfg
+SmartPlay.feedTeamProactive = feedTeamProactive
 SmartPlay.countUnitBag = countUnitBag
 SmartPlay.getUnitBagLimit = getUnitBagLimit
 SmartPlay.getBagFreeSlots = getBagFreeSlots

@@ -198,6 +198,12 @@ local defaultSettings = {
     -- ยูนิตร่ายสกิล/อัลติอัตโนมัติ = burst damage หลักที่ใช้ตีบอส (ปิดไว้ = ตีบอสไม่ไหว)
     ["Auto Abilities"] = true,
 
+    -- Feed เชิงรุก: level ยูนิตในทีมที่ยังต่ำ (เช่น carry Mythic Lvl 1) ทุกรอบกลับ lobby
+    -- ไม่ต้องรอแพ้ติด — permanent level ต่ำ = base stat ต่ำ = ตีบอสไม่ออก
+    ["Auto Feed Team"] = true,
+    ["Feed Team Below Level"] = 10, -- feed เฉพาะตัวที่ Level ต่ำกว่านี้ (สูงกว่า=ข้าม กันเปลืองอาหาร)
+    ["Feed Team Food Per Unit"] = 100, -- อาหารต่อตัวต่อรอบ (มากกว่า SmartPlay recovery เพราะดัน carry)
+
     -- Smart Placement: วางแบบดูระยะยิง + วางตัว DPS สูงสุดก่อน
     ["Smart Placement"] = {
         Enabled = true,

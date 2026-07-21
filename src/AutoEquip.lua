@@ -227,17 +227,18 @@ local function scanNodesForEquip()
         end
     end
 
-    -- 2) probe ชื่อ candidate ตรงๆ (เผื่อ enumerate ไม่เห็น) — verified ถ้าอยู่ใน enumSet
+    -- 2) เช็คชื่อ candidate — เฉพาะที่ "มีจริง" ใน enumSet เท่านั้น
+    -- (ห้าม getNodeByName ชื่อที่ไม่มีจริง เพราะ proxy __index อาจ WaitForChild → ค้างเกม)
     for _, cand in ipairs(CANDIDATE_EQUIP_NAMES) do
-        local real = enumSet[cand] or cand
-        if nodeIsFireable(getNodeByName(real)) then
-            bump(equipScore, real, enumSet[cand] and 90 or 15)
+        local real = enumSet[cand]
+        if real and nodeIsFireable(getNodeByName(real)) then
+            bump(equipScore, real, 90)
         end
     end
     for _, cand in ipairs(CANDIDATE_UNEQUIP_NAMES) do
-        local real = enumSet[cand] or cand
-        if nodeIsFireable(getNodeByName(real)) then
-            bump(unequipScore, real, enumSet[cand] and 90 or 15)
+        local real = enumSet[cand]
+        if real and nodeIsFireable(getNodeByName(real)) then
+            bump(unequipScore, real, 90)
         end
     end
 
@@ -537,126 +538,162 @@ end
 -- Diagnostic dump — รันครั้งเดียวเพื่อยืนยันชื่อ node/คีย์จริง แล้ว hardcode ได้
 ------------------------------------------------------------------------
 local function dump()
-    local cfg = getCfg()
-    local disc = discover(cfg, true)
-    print("========== AE Kaitun AutoEquip DUMP ==========")
-    print("PlayerData equipment container key =", tostring(disc.containerKey))
-    print("equip node (เลือกใช้) =", tostring(disc.equipNodeName))
-    print("unequip node (เลือกใช้) =", tostring(disc.unequipNodeName))
-    local function fmtCands(hits)
-        local s = {}
-        for _, h in ipairs(hits or {}) do
-            table.insert(s, ("%s[score=%d%s]"):format(h.name, h.score or 0, h.verified and ",verified" or ",UNVERIFIED"))
+    local L = {}
+    local function emit(...)
+        local parts = {}
+        for i = 1, select("#", ...) do
+            parts[i] = tostring(select(i, ...))
         end
-        return #s > 0 and table.concat(s, ", ") or "(none)"
-    end
-    print("equip candidates =", fmtCands(disc.equipCandidates))
-    print("unequip candidates =", fmtCands(disc.unequipCandidates))
-
-    -- ลิสต์คีย์ทั้งหมดใน PlayerData (หา container ที่ auto-discover พลาด)
-    local data = peek(Dependencies.PlayerData)
-    if typeof(data) ~= "table" then
-        data = getPlayerData()
-    end
-    if typeof(data) == "table" then
-        local keys = {}
-        for k, v in pairs(data) do
-            table.insert(keys, tostring(k) .. "(" .. typeof(v) .. ")")
-        end
-        table.sort(keys)
-        print("PlayerData keys =", table.concat(keys, ", "))
+        table.insert(L, table.concat(parts, " "))
     end
 
-    -- ตัวอย่าง entry แรกใน container + กาง Stats subtable (หา field equip reference)
-    if typeof(disc.container) == "table" then
-        for id, e in pairs(disc.container) do
-            print("sample equipment id =", tostring(id))
-            if typeof(e) == "table" then
-                local fields = {}
-                for k, v in pairs(e) do
-                    table.insert(fields, tostring(k) .. "=" .. tostring(v))
-                    if typeof(v) == "table" then
-                        local sub = {}
-                        for sk, sv in pairs(v) do
-                            table.insert(sub, tostring(sk) .. "=" .. tostring(sv))
+    -- ห่อทั้งหมดใน pcall กัน error กลางทางแล้วไม่ได้เซฟไฟล์
+    pcall(function()
+        local cfg = getCfg()
+        local disc = discover(cfg, true)
+        emit("========== AE Kaitun AutoEquip DUMP ==========")
+        emit("time =", os.date("%Y-%m-%d %H:%M:%S"))
+        emit("PlayerData equipment container key =", tostring(disc.containerKey))
+        emit("equip node (เลือกใช้) =", tostring(disc.equipNodeName))
+        emit("unequip node (เลือกใช้) =", tostring(disc.unequipNodeName))
+        local function fmtCands(hits)
+            local s = {}
+            for _, h in ipairs(hits or {}) do
+                table.insert(s, ("%s[score=%d%s]"):format(h.name, h.score or 0, h.verified and ",verified" or ",UNVERIFIED"))
+            end
+            return #s > 0 and table.concat(s, ", ") or "(none)"
+        end
+        emit("equip candidates =", fmtCands(disc.equipCandidates))
+        emit("unequip candidates =", fmtCands(disc.unequipCandidates))
+
+        local data = peek(Dependencies.PlayerData)
+        if typeof(data) ~= "table" then
+            data = getPlayerData()
+        end
+        if typeof(data) == "table" then
+            local keys = {}
+            for k, v in pairs(data) do
+                table.insert(keys, tostring(k) .. "(" .. typeof(v) .. ")")
+            end
+            table.sort(keys)
+            emit("PlayerData keys =", table.concat(keys, ", "))
+        end
+
+        -- ตัวอย่าง entry แรกใน container + กาง Stats subtable (หา field equip reference)
+        if typeof(disc.container) == "table" then
+            for id, e in pairs(disc.container) do
+                emit("sample equipment id =", tostring(id))
+                if typeof(e) == "table" then
+                    local fields = {}
+                    for k, v in pairs(e) do
+                        table.insert(fields, tostring(k) .. "=" .. tostring(v))
+                        if typeof(v) == "table" then
+                            local sub = {}
+                            for sk, sv in pairs(v) do
+                                table.insert(sub, tostring(sk) .. "=" .. tostring(sv))
+                            end
+                            table.sort(sub)
+                            emit(("    %s.* : %s"):format(tostring(k), table.concat(sub, " | ")))
                         end
-                        table.sort(sub)
-                        print(("    %s.* : %s"):format(tostring(k), table.concat(sub, " | ")))
+                    end
+                    table.sort(fields)
+                    emit("  fields:", table.concat(fields, " | "))
+                end
+                break
+            end
+            local items = getEquipmentItems(disc.container, cfg)
+            emit("equipment count =", #items)
+            for i = 1, math.min(8, #items) do
+                local it = items[i]
+                emit(("  [%d] %s %s Lv%d EquippedTo=%s"):format(
+                    i, tostring(it.Rarity), tostring(it.Asset), it.Level, tostring(it.EquippedTo)
+                ))
+            end
+        end
+
+        -- ตัวอย่าง UnitData entry — หา field ที่ยูนิตอ้าง equipment (Equipment/Items/Equipped)
+        if typeof(data) == "table" and typeof(data.UnitData) == "table" then
+            for id, u in pairs(data.UnitData) do
+                emit("sample unit id =", tostring(id))
+                if typeof(u) == "table" then
+                    local ufields = {}
+                    for k, v in pairs(u) do
+                        table.insert(ufields, tostring(k) .. "=" .. tostring(v))
+                        if typeof(v) == "table" then
+                            local sub = {}
+                            for sk, sv in pairs(v) do
+                                table.insert(sub, tostring(sk) .. "=" .. tostring(sv))
+                            end
+                            table.sort(sub)
+                            emit(("    unit.%s.* : %s"):format(tostring(k), table.concat(sub, " | ")))
+                        end
+                    end
+                    table.sort(ufields)
+                    emit("  unit fields:", table.concat(ufields, " | "))
+                end
+                break
+            end
+        end
+
+        -- node names ทั้งหมด (Nodes เป็น proxy → pairs ตรงว่าง) — เข้าถึงเฉพาะชื่อจริง
+        local allNames = enumerateNodeNames(true)
+        emit("node names ที่ enumerate ได้ (total) =", #allNames)
+        local broad = {}
+        for _, name in ipairs(allNames) do
+            local up = name:upper()
+            if up:find("EQUIP", 1, true) or up:find("ITEM", 1, true)
+                or up:find("ACCESSOR", 1, true) or up:find("GEAR", 1, true)
+                or up:find("RELIC", 1, true) or up:find("TRINKET", 1, true)
+                or up:find("ARTIFACT", 1, true) or up:find("WEAPON", 1, true)
+                or up:find("CHARM", 1, true) or up:find("STONE", 1, true)
+                or up:find("ENHANC", 1, true) or up:find("UPGRADE", 1, true) then
+                local fireable = nodeIsFireable(getNodeByName(name)) and "*" or ""
+                table.insert(broad, name .. fireable)
+            end
+        end
+        table.sort(broad)
+        emit("Nodes ที่น่าสนใจ (equip/item/gear/... , * = fireable) =", table.concat(broad, ", "))
+        -- ลิสต์ node ทั้งหมด (เผื่อชื่อ equip ไม่มีคำใบ้) — อยู่ในไฟล์ ไม่ท่วมคอนโซล
+        table.sort(allNames)
+        emit("ALL node names =", table.concat(allNames, ", "))
+
+        -- เผื่อ equip ไปทาง Fusion Actions แทน Nodes
+        if typeof(Actions) == "table" then
+            local aHits, aAll = {}, {}
+            pcall(function()
+                for k, v in pairs(Actions) do
+                    if typeof(k) == "string" then
+                        table.insert(aAll, k)
+                        local up = k:upper()
+                        if up:find("EQUIP", 1, true) or up:find("ITEM", 1, true)
+                            or up:find("ACCESSOR", 1, true) or up:find("GEAR", 1, true)
+                            or up:find("RELIC", 1, true) then
+                            table.insert(aHits, k .. "(" .. typeof(v) .. ")")
+                        end
                     end
                 end
-                table.sort(fields)
-                print("  fields:", table.concat(fields, " | "))
-            end
-            break
+            end)
+            table.sort(aHits)
+            table.sort(aAll)
+            emit("Actions ที่เกี่ยวข้อง =", table.concat(aHits, ", "))
+            emit("Actions ทั้งหมด =", table.concat(aAll, ", "))
         end
-        local items = getEquipmentItems(disc.container, cfg)
-        print("equipment count =", #items)
-        for i = 1, math.min(5, #items) do
-            local it = items[i]
-            print(("  [%d] %s %s Lv%d EquippedTo=%s"):format(
-                i, tostring(it.Rarity), tostring(it.Asset), it.Level, tostring(it.EquippedTo)
-            ))
-        end
-    end
+        emit("==============================================")
+    end)
 
-    -- ตัวอย่าง UnitData entry — หา field ที่ยูนิตอ้างอิง equipment (Equipment/Items/Equipped)
-    if typeof(data) == "table" and typeof(data.UnitData) == "table" then
-        for id, u in pairs(data.UnitData) do
-            print("sample unit id =", tostring(id))
-            if typeof(u) == "table" then
-                local ufields = {}
-                for k, v in pairs(u) do
-                    table.insert(ufields, tostring(k) .. "=" .. tostring(v))
-                end
-                table.sort(ufields)
-                print("  unit fields:", table.concat(ufields, " | "))
-            end
-            break
-        end
+    local content = table.concat(L, "\n")
+    local fileName = "AE_KaitunEquipDump.txt"
+    local wrote = false
+    if typeof(writefile) == "function" then
+        wrote = pcall(writefile, fileName, content)
     end
-
-    -- enumerate node names ทั้งหมด (Nodes เป็น proxy → pairs ตรงว่าง)
-    local allNames = enumerateNodeNames(true)
-    print("node names ที่ enumerate ได้ (total) =", #allNames)
-    local broad = {}
-    for _, name in ipairs(allNames) do
-        local up = name:upper()
-        if up:find("EQUIP", 1, true) or up:find("ITEM", 1, true)
-            or up:find("ACCESSOR", 1, true) or up:find("GEAR", 1, true)
-            or up:find("RELIC", 1, true) or up:find("TRINKET", 1, true)
-            or up:find("ARTIFACT", 1, true) or up:find("WEAPON", 1, true)
-            or up:find("CHARM", 1, true) or up:find("STONE", 1, true)
-            or up:find("ENHANC", 1, true) or up:find("UPGRADE", 1, true) then
-            local fireable = nodeIsFireable(getNodeByName(name)) and "*" or ""
-            table.insert(broad, name .. fireable)
-        end
+    if wrote then
+        print("[AE Kaitun] AutoEquip DUMP เซฟแล้ว →", fileName, "(" .. #L .. " บรรทัด) — เปิดในโฟลเดอร์ workspace ของ executor")
+    else
+        warn("[AE Kaitun] writefile ใช้ไม่ได้ — print ลงคอนโซลแทน:")
+        print(content)
     end
-    table.sort(broad)
-    print("Nodes ที่น่าสนใจ (equip/item/gear/... , * = fireable) =", table.concat(broad, ", "))
-
-    -- เผื่อ equip ไปทาง Fusion Actions แทน Nodes → ลิสต์คีย์ Actions ที่เกี่ยวข้อง
-    if typeof(Actions) == "table" then
-        local aHits, aAll = {}, {}
-        pcall(function()
-            for k, v in pairs(Actions) do
-                if typeof(k) == "string" then
-                    table.insert(aAll, k)
-                    local up = k:upper()
-                    if up:find("EQUIP", 1, true) or up:find("ITEM", 1, true)
-                        or up:find("ACCESSOR", 1, true) or up:find("GEAR", 1, true)
-                        or up:find("RELIC", 1, true) then
-                        table.insert(aHits, k .. "(" .. typeof(v) .. ")")
-                    end
-                end
-            end
-        end)
-        table.sort(aHits)
-        table.sort(aAll)
-        print("Actions ที่เกี่ยวข้อง =", table.concat(aHits, ", "))
-        print("Actions ทั้งหมด =", table.concat(aAll, ", "))
-    end
-    print("==============================================")
-    return disc
+    return content
 end
 
 AutoEquip.getCfg = getCfg

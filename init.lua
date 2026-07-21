@@ -156,6 +156,9 @@ task.spawn(function()
         Rewards.claimAllRewards()
         Summon.autoSellBagUnits()
         pcall(function()
+            SmartPlay.feedTeamProactive()
+        end)
+        pcall(function()
             AutoEquip.autoEquipBestItems("startup")
         end)
         FarmLoop.runStoryFarmLoop()
@@ -241,6 +244,7 @@ getgenv().AEKaitun = {
     SmartPlayBag = function()
         return SmartPlay.countUnitBag(), SmartPlay.getUnitBagLimit(), SmartPlay.getBagFreeSlots()
     end,
+    FeedTeam = SmartPlay.feedTeamProactive,
     RemakeBestTeam = Team.remakeBestTeam,
     AutoEquip = function()
         return AutoEquip.autoEquipBestItems("manual")

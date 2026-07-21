@@ -204,6 +204,10 @@ local function runStoryFarmLoop()
                     Summon.sellDuplicateLegendaries()
                 end
             end)
+            -- feed เชิงรุก: level carry ที่ยังต่ำ (เช่น Mythic Lvl 1) ทุกรอบ ไม่ต้องรอแพ้
+            pcall(function()
+                SmartPlay.feedTeamProactive()
+            end)
             if not consumeFarmMatchReturn() then
                 print("[AE Kaitun] Farm All Story เสร็จแล้ว")
                 break
