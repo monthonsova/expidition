@@ -38,6 +38,23 @@ local function getUnitDPS(asset)
     return 0
 end
 
+local placementEngineRef = nil
+local function isFarmUnit(asset)
+    if not asset or asset == "" then return false end
+    if placementEngineRef == nil then
+        local ok, PE = pcall(function()
+            return _G.AEKaitun_Loader and _G.AEKaitun_Loader.require("src/PlacementEngine.lua")
+                or loadstring(readfile("expidition/src/PlacementEngine.lua"))()
+        end)
+        placementEngineRef = (ok and typeof(PE) == "table" and PE) or false
+    end
+    if placementEngineRef and placementEngineRef.isFarmUnit then
+        return placementEngineRef.isFarmUnit(asset)
+    end
+    local lower = tostring(asset):lower()
+    return lower:find("farm") or lower:find("ichiraku") or lower:find("ramen") or lower:find("alchemist") or lower:find("money")
+end
+
 local function getUnlockedHotbarSlots()
     local open = {}
     local hotbar = peek(Dependencies.HotbarState)
@@ -506,6 +523,36 @@ local function getBestUnitsForTeam(limit, opts)
             end
         end
     end
+
+    -- ยืนยันว่ามีตัวผลิตเงิน (Farm) อยู่ในทีมอย่างน้อย 1 ตัวเสมอ!
+    local hasFarm = false
+    for _, u in ipairs(out) do
+        if isFarmUnit(u.Asset) then
+            hasFarm = true
+            break
+        end
+    end
+
+    if not hasFarm then
+        local bestFarm = nil
+        for _, u in ipairs(list) do
+            if isFarmUnit(u.Asset) then
+                if not bestFarm or unitScore(u, cfg) > unitScore(bestFarm, cfg) then
+                    bestFarm = u
+                end
+            end
+        end
+
+        if bestFarm then
+            print("[AE Kaitun] สงวนช่องทีม 1 ช่องให้ตัวผลิตเงิน (Farm) →", bestFarm.Asset)
+            if #out >= limit then
+                out[#out] = bestFarm
+            else
+                table.insert(out, bestFarm)
+            end
+        end
+    end
+
     return out
 end
 
