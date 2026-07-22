@@ -211,9 +211,9 @@ local defaultSettings = {
     -- เน้นเลือกวางยูนิตสาย Magical (เวท) ก่อนในเฟสดาเมจ
     ["Place Magical First"] = true,
     ["Max Place Per Slot"] = 4,
-    ["Max Farm Place"] = 1,
-    ["Place Farm After Combat"] = true,
-    ["Min Combat Before Farm"] = 2,
+    ["Max Farm Place"] = 4,
+    ["Place Farm After Combat"] = false,
+    ["Min Combat Before Farm"] = 0,
     ["Auto Skip Waves"] = true,
     ["Auto Upgrade"] = true,
     -- ยูนิตร่ายสกิล/อัลติอัตโนมัติ = burst damage หลักที่ใช้ตีบอส (ปิดไว้ = ตีบอสไม่ไหว)

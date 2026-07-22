@@ -710,8 +710,8 @@ local function autoPlaceUnits()
                 continue
             end
 
-            -- เงินไม่พอจริงๆ เท่านั้น (nil = อ่านไม่ได้ → ลองวางต่อ)
-            local seemBroke = (typeof(yenNow) == "number" and cheapestNeed ~= nil and yenNow < cheapestNeed)
+            -- เงินไม่พอจริงๆ เท่านั้น (nil หรือ 0 = ยังไม่ซิงค์ → ให้พยายามวางต่อ)
+            local seemBroke = (typeof(yenNow) == "number" and yenNow > 0 and cheapestNeed ~= nil and yenNow < cheapestNeed)
 
             if seemBroke then
                 if attempts == 1 or attempts % 6 == 0 then

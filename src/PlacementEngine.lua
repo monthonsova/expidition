@@ -309,9 +309,9 @@ end
 local function canAffordSlot(slot)
     local cost = getSlotPlacementCost(slot)
     local yen = getGameYen()
-    -- อ่านเงินไม่ได้ → ไม่บล็อก (เกมก็ถือ nil = พอ)
-    if yen == nil then
-        return true, -1, cost
+    -- อ่านเงินไม่ได้ หรืออ่านได้ 0 (ยังไม่ซิงค์) → ไม่บล็อก ให้ยิงวางลองกับเซิร์ฟเวอร์
+    if yen == nil or yen <= 0 then
+        return true, yen or -1, cost
     end
     return yen >= cost, yen, cost
 end
