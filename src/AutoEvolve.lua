@@ -154,21 +154,72 @@ local function quickCraftIngredients(requirements)
 end
 
 -- ------------------------------------------------------------------------
--- Challenge Matchmaking for Missing Materials
+-- Targeted Challenge Selection & Matchmaking for Missing Materials
 -- ------------------------------------------------------------------------
-local function startChallengeMatchmaking()
+local function findChallengeStageDroppingItem(missingItemName)
+    if not missingItemName or missingItemName == "" then
+        return nil, nil
+    end
+
+    local targetType, targetIndex = nil, nil
+
+    pcall(function()
+        local challengeData = peek(Dependencies.ChallengeData)
+        if typeof(challengeData) == "table" then
+            for cType, stages in pairs(challengeData) do
+                if typeof(stages) == "table" then
+                    for idx, stage in pairs(stages) do
+                        if typeof(stage) == "table" then
+                            -- Check Stage Rewards / Drops
+                            local rewards = stage.Rewards or stage.Drops or stage.Items
+                            if typeof(rewards) == "table" then
+                                for _, r in pairs(rewards) do
+                                    local rName = typeof(r) == "table" and (r.Asset or r.Item or r.Name) or tostring(r)
+                                    if rName == missingItemName then
+                                        targetType = tostring(cType)
+                                        targetIndex = tonumber(idx) or 1
+                                        return
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end)
+
+    return targetType, targetIndex
+end
+
+local function startChallengeMatchmaking(missingItemName)
     if _G.Settings["Auto Farm Challenge For Evolution"] == false then
         return false
     end
 
     if isInGame() then return false end
 
-    print("[AE Kaitun AutoEvolve] Starting Challenge Mode Matchmaking...")
+    -- 1. Try finding a specific Challenge stage that drops the requested item
+    local targetType, targetIndex = findChallengeStageDroppingItem(missingItemName)
+
+    if targetType and targetIndex then
+        print(("[AE Kaitun AutoEvolve] Target Challenge Found for %s -> Type=%s Index=%d"):format(
+            tostring(missingItemName), targetType, targetIndex
+        ))
+    else
+        -- 2. Fallback: If no stage currently shows the drop, cycle/randomly select available Challenge stages
+        targetType = _G.Settings["Challenge Mode Type"] or "Regular"
+        targetIndex = math.random(1, 3)
+        print(("[AE Kaitun AutoEvolve] No specific stage drops %s in current view -> Cycling Challenge Type=%s Index=%d"):format(
+            tostring(missingItemName), targetType, targetIndex
+        ))
+    end
+
     local ok = pcall(function()
         Nodes.REQUEST_ENTER_MATCHMAKING:Request({
             Gamemode = "Challenge",
-            ChallengeType = _G.Settings["Challenge Mode Type"] or "Regular",
-            ChallengeIndex = tonumber(_G.Settings["Challenge Mode Index"]) or 1,
+            ChallengeType = targetType,
+            ChallengeIndex = targetIndex,
             Difficulty = "Normal",
         })
     end)
@@ -225,13 +276,15 @@ local function runAutoEvolveLoop()
 
         local reqs = checkEvolutionRequirements(entry.Asset)
         local allMet = true
-        local hasMissing = false
+        local firstMissingItem = nil
 
         if #reqs > 0 then
             for _, req in ipairs(reqs) do
                 if req.Missing > 0 then
                     allMet = false
-                    hasMissing = true
+                    if not firstMissingItem then
+                        firstMissingItem = req.Asset
+                    end
                     print(("[AE Kaitun AutoEvolve] %s needs %s (%d/%d, missing %d)"):format(
                         entry.Asset, req.Asset, req.Have, req.Required, req.Missing
                     ))
@@ -259,9 +312,9 @@ local function runAutoEvolveLoop()
                 end
             end
 
-            -- If materials still missing -> Queue Challenge mode to farm materials
-            if hasMissing then
-                startChallengeMatchmaking()
+            -- If materials still missing -> Find target Challenge stage or cycle Challenges
+            if firstMissingItem then
+                startChallengeMatchmaking(firstMissingItem)
                 break
             end
         end
@@ -272,6 +325,7 @@ end
 AutoEvolve.getUnEvolvedMythicsAndSecrets = getUnEvolvedMythicsAndSecrets
 AutoEvolve.checkEvolutionRequirements = checkEvolutionRequirements
 AutoEvolve.tryEvolveUnit = tryEvolveUnit
+AutoEvolve.findChallengeStageDroppingItem = findChallengeStageDroppingItem
 AutoEvolve.startChallengeMatchmaking = startChallengeMatchmaking
 AutoEvolve.runAutoEvolveLoop = runAutoEvolveLoop
 
