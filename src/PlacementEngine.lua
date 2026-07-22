@@ -419,13 +419,23 @@ local function isMagicalUnit(asset)
 end
 
 local FARM_ASSET_FALLBACK = {
-    Ichiraku = true, -- Ramen Guy
+    Ichiraku = true,       -- Ramen Guy
+    RamenGuy = true,
+    StoneAlchemist = true, -- Stone Alchemist
+    Stone_Alchemist = true,
+    Alchemist = true,
+    Bulma = true,
+    Speedwagon = true,
 }
 local function isFarmUnit(asset)
     if not asset or asset == "" then
         return false
     end
     if FARM_ASSET_FALLBACK[asset] then
+        return true
+    end
+    local lowerAsset = tostring(asset):lower()
+    if lowerAsset:find("farm") or lowerAsset:find("ichiraku") or lowerAsset:find("ramen") or lowerAsset:find("alchemist") or lowerAsset:find("money") then
         return true
     end
     local farm = false
