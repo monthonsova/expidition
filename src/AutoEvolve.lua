@@ -352,14 +352,16 @@ local function runAutoEvolveLoop()
                 end
             end
 
-            -- If materials still missing -> Create party & Launch Challenge match immediately!
-            print(("[AE Kaitun AutoEvolve] Missing material (%s) for %s -> Launching Challenge Match"):format(
+            -- If materials still missing -> Queue Challenge match & return true to pause Story Mode!
+            print(("[AE Kaitun AutoEvolve] Missing material (%s) for %s -> Entering Challenge Matchmaking"):format(
                 tostring(firstMissingItem), entry.Asset
             ))
             startChallengeMatchmaking(firstMissingItem)
-            break
+            return true
         end
     end
+
+    return false
 end
 
 -- Export helper functions

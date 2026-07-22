@@ -91,11 +91,18 @@ local function runStoryFarmLoop()
 
     print("[AE Kaitun] Farm All Story — Clear ตามเลเวล / Grind หลังครบ")
     -- สแกนและดำเนินขั้นตอน Auto-Evolve / Quick Craft / Challenge สำหรับ Mythic และ Secret
+    local inChallengeQueue = false
     pcall(function()
         if not isInGame() then
-            AutoEvolve.runAutoEvolveLoop()
+            inChallengeQueue = AutoEvolve.runAutoEvolveLoop()
         end
     end)
+
+    if inChallengeQueue then
+        print("[AE Kaitun] อยู่ในคิว Challenge Matchmaking — ข้ามการเริ่ม Story Mode")
+        return
+    end
+
     -- หลัง teleport soft-reset flag ค้างใน getgenv → รัน SmartPlay ก่อนคิวด่านแรก
     pcall(function()
         SmartPlay.consumeIfNeeded("farm-loop-start")
