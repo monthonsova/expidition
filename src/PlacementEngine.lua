@@ -492,31 +492,37 @@ local function getUnitCombatStats(asset)
     return out
 end
 
--- เรียงช่อง: ตัวผลิตเงิน (Farm) ก่อนเสมอ → Magical ก่อน → ราคาแพง → ราคาถูก
+-- เรียงช่อง: วางตัวผลิตเงิน (Farm) ก่อนจนครบลิมิต → จากนั้นวางตัวที่มีดาเมจ/DPS สูงสุดเรียงลงมา
 local function getAffordableSlotsOrdered()
     local slots = getHotbarSlots()
-    local magicalFirst = _G.Settings["Place Magical First"] ~= false
     local ranked = {}
     for _, slot in ipairs(slots) do
         local asset = getSlotAsset(slot)
+        local isFarm = isFarmUnit(asset)
+        local canFarm = isFarm and (countOwnPlacedByAsset(asset) < getPlacementLimit(asset))
+        local combat = getUnitCombatStats(asset)
         table.insert(ranked, {
             slot = slot,
             asset = asset,
             cost = getSlotPlacementCost(slot),
             arche = getUnitArchetype(asset),
-            isFarm = isFarmUnit(asset) and 1 or 0,
+            canPlaceFarm = canFarm and 1 or 0,
+            isFarm = isFarm and 1 or 0,
+            dps = combat and combat.dps or 0,
             magical = isMagicalUnit(asset) and 1 or 0,
         })
     end
     table.sort(ranked, function(a, b)
-        if a.isFarm ~= b.isFarm then
-            return a.isFarm > b.isFarm -- ตัวผลิตเงิน (Farm) ขึ้นก่อนเสมอ!
+        -- 1. วางตัวผลิตเงิน (Farm) ก่อนจนกว่าจะวางเพิ่มไม่ได้ (ครบลิมิต)
+        if a.canPlaceFarm ~= b.canPlaceFarm then
+            return a.canPlaceFarm > b.canPlaceFarm
         end
-        if magicalFirst and a.magical ~= b.magical then
-            return a.magical > b.magical -- Magical ก่อน
+        -- 2. เมื่อวางตัวผลิตเงินไม่ได้แล้ว → วางยูนิตที่มี DPS/ดาเมจสูงสุดเรียงลงมา
+        if math.abs((a.dps or 0) - (b.dps or 0)) > 0.01 then
+            return (a.dps or 0) > (b.dps or 0)
         end
         if a.cost ~= b.cost then
-            return a.cost > b.cost -- แพง → ถูก
+            return a.cost > b.cost
         end
         return a.slot < b.slot
     end)

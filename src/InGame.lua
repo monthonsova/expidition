@@ -102,6 +102,22 @@ end
 -- ------------------------------------------------------------------------
 local upgradeRunning = false
 
+local function getUnitUpgradeCost(data, asset)
+    if typeof(data) == "table" then
+        local cost = tonumber(unwrapVal(data.UpgradeCost) or unwrapVal(data.NextCost) or unwrapVal(data.Cost))
+        if cost and cost > 0 then return cost end
+    end
+    pcall(function()
+        local UnitUtils = Core.getCachedUnitUtils()
+        local lvl = tonumber(unwrapVal(data.Level) or unwrapVal(data.UpgradeLevel) or 0)
+        if UnitUtils and UnitUtils.GetUpgradeCost then
+            local c = tonumber(UnitUtils:GetUpgradeCost(asset, lvl))
+            if c and c > 0 then cost = c end
+        end
+    end)
+    return cost or 0
+end
+
 local function manageUnitUpgrades()
     if _G.Settings["Auto Upgrade"] == false then
         return
@@ -116,6 +132,7 @@ local function manageUnitUpgrades()
         return
     end
 
+    local yenNow = getGameYen()
     local farmUnits = {}
     local combatUnits = {}
 
@@ -127,33 +144,59 @@ local function manageUnitUpgrades()
             local isMaxed = unwrapVal(data.IsMaxed) == true or unwrapVal(data.MaxUpgrade) == true
 
             if id ~= nil and not isMaxed then
+                local cost = getUnitUpgradeCost(data, asset)
+                local stats = PlacementEngine.getUnitCombatStats(asset)
+                local dps = stats and stats.dps or 0
+
+                local entry = { id = id, asset = asset, cost = cost, dps = dps }
                 if isFarmUnit(asset) then
-                    table.insert(farmUnits, { id = id, asset = asset })
+                    table.insert(farmUnits, entry)
                 else
-                    table.insert(combatUnits, { id = id, asset = asset })
+                    table.insert(combatUnits, entry)
                 end
             end
         end
     end
 
-    -- Priority 1: อัปเกรดตัวผลิตเงิน (Farm) ก่อนเสมอ!
+    -- Priority 1: หากมีตัวผลิตเงิน (Farm) และเงินพออัปเกรด → อัปเกรดตัวผลิตเงินก่อนเสมอ!
+    local upgradedFarm = false
     if #farmUnits > 0 then
         for _, u in ipairs(farmUnits) do
-            pcall(function()
-                rep:FireServer("UpgradeGameUnit", u.id)
-            end)
-            task.wait(0.25)
+            if typeof(yenNow) ~= "number" or u.cost <= 0 or yenNow >= u.cost then
+                pcall(function()
+                    rep:FireServer("UpgradeGameUnit", u.id)
+                end)
+                upgradedFarm = true
+                task.wait(0.25)
+                break
+            end
         end
+    end
+
+    -- ถ้าอัปเกรดตัวผลิตเงินในรอบนี้ไปแล้ว → พักรอรอบถัดไป
+    if upgradedFarm then
         return
     end
 
-    -- Priority 2: เมื่ออัปเกรดตัวผลิตเงินครบแล้ว ค่อยอัปเกรดตัวโจมตี
-    if #combatUnits > 0 then
-        for _, u in ipairs(combatUnits) do
+    -- Priority 2: ถ้าเงินยังไม่พออัปเกรดตัวผลิตเงิน หรือตัวผลิตเงินเต็มแล้ว → อัปเกรดยูนิตดาเมจสูงสุดที่เงินพอจ่ายได้ในระหว่างรอ
+    local affordableCombat = {}
+    for _, u in ipairs(combatUnits) do
+        if typeof(yenNow) ~= "number" or u.cost <= 0 or yenNow >= u.cost then
+            table.insert(affordableCombat, u)
+        end
+    end
+
+    if #affordableCombat > 0 then
+        table.sort(affordableCombat, function(a, b)
+            return a.dps > b.dps -- เรียงตัวดาเมต/DPS สูงสุดลงมา!
+        end)
+
+        for _, u in ipairs(affordableCombat) do
             pcall(function()
                 rep:FireServer("UpgradeGameUnit", u.id)
             end)
             task.wait(0.25)
+            break
         end
     end
 end
