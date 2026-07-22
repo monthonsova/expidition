@@ -1,4 +1,4 @@
--- AE Kaitun - Auto Evolve, Quick Craft & Challenge Farming Module
+-- AE Kaitun - Auto Evolve, Quick Craft, Unit Trial & Challenge Farming Module
 
 local AutoEvolve = {}
 
@@ -156,6 +156,31 @@ local function checkEvolutionRequirements(unevolvedAsset)
 end
 
 -- ------------------------------------------------------------------------
+-- Unit Trial Entry for First Evolution Material Reward
+-- ------------------------------------------------------------------------
+local function enterUnitTrial(unitAsset)
+    if not unitAsset or unitAsset == "" then return false end
+    if isInGame() then return false end
+
+    print(("[AE Kaitun AutoEvolve] Entering Unit Trial for %s to get first evolution item..."):format(tostring(unitAsset)))
+
+    local ok = pcall(function()
+        if Nodes.ENTER_UNIT_TRIAL then
+            Nodes.ENTER_UNIT_TRIAL:FireServer(unitAsset)
+        end
+        if Core.Actions and Core.Actions.EnterUnitTrial then
+            Core.Actions.EnterUnitTrial(unitAsset)
+        end
+    end)
+
+    getgenv().AEKaitun_TriedUnits = getgenv().AEKaitun_TriedUnits or {}
+    getgenv().AEKaitun_TriedUnits[unitAsset] = true
+
+    print(("[AE Kaitun AutoEvolve] Unit Trial Request Sent for %s (Ok=%s)"):format(tostring(unitAsset), tostring(ok)))
+    return ok
+end
+
+-- ------------------------------------------------------------------------
 -- Quick Craft Missing Ingredients
 -- ------------------------------------------------------------------------
 local function quickCraftIngredients(requirements)
@@ -180,7 +205,7 @@ local function quickCraftIngredients(requirements)
 end
 
 -- ------------------------------------------------------------------------
--- Targeted Challenge Selection & Match Launching for Missing Materials
+-- Targeted Challenge Selection & Matchmaking for Missing Materials
 -- ------------------------------------------------------------------------
 local function findChallengeStageDroppingItem(missingItemName)
     if not missingItemName or missingItemName == "" then
@@ -224,7 +249,6 @@ local function startChallengeMatchmaking(missingItemName)
 
     if isInGame() then return false end
 
-    -- 1. Try finding a specific Challenge stage that drops the requested item
     local targetType, targetIndex = findChallengeStageDroppingItem(missingItemName)
 
     if targetType and targetIndex then
@@ -232,7 +256,6 @@ local function startChallengeMatchmaking(missingItemName)
             tostring(missingItemName), targetType, targetIndex
         ))
     else
-        -- 2. Fallback: If no stage currently shows the drop, cycle/randomly select available Challenge stages
         targetType = _G.Settings["Challenge Mode Type"] or "Regular"
         targetIndex = math.random(1, 3)
         print(("[AE Kaitun AutoEvolve] No specific stage drops %s in current view -> Cycling Challenge Type=%s Index=%d"):format(
@@ -337,7 +360,14 @@ local function runAutoEvolveLoop()
             -- Requirements met -> Evolve now!
             tryEvolveUnit(entry.ID, entry.Asset, entry.TargetEvolved)
         else
-            -- Try Quick Crafting missing ingredients first
+            -- Step 1: Perform Unit Trial first if not attempted yet in this session
+            getgenv().AEKaitun_TriedUnits = getgenv().AEKaitun_TriedUnits or {}
+            if not getgenv().AEKaitun_TriedUnits[entry.Asset] then
+                enterUnitTrial(entry.Asset)
+                return true
+            end
+
+            -- Step 2: Try Quick Crafting missing ingredients
             local crafted = quickCraftIngredients(reqs)
             if crafted then
                 task.wait(1.5)
@@ -352,7 +382,7 @@ local function runAutoEvolveLoop()
                 end
             end
 
-            -- If materials still missing -> Queue Challenge match & return true to pause Story Mode!
+            -- Step 3: Queue Challenge match & return true to pause Story Mode!
             print(("[AE Kaitun AutoEvolve] Missing material (%s) for %s -> Entering Challenge Matchmaking"):format(
                 tostring(firstMissingItem), entry.Asset
             ))
@@ -367,6 +397,7 @@ end
 -- Export helper functions
 AutoEvolve.getUnEvolvedMythicsAndSecrets = getUnEvolvedMythicsAndSecrets
 AutoEvolve.checkEvolutionRequirements = checkEvolutionRequirements
+AutoEvolve.enterUnitTrial = enterUnitTrial
 AutoEvolve.tryEvolveUnit = tryEvolveUnit
 AutoEvolve.findChallengeStageDroppingItem = findChallengeStageDroppingItem
 AutoEvolve.startChallengeMatchmaking = startChallengeMatchmaking
