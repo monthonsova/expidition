@@ -1023,6 +1023,23 @@ local function setupEndScreenHandler()
     print("[AE Kaitun] EndScreen handler = on (Defeat→Restart / SoftReset)")
 end
 
+local function getMatchGamemode()
+    local mode = "Story"
+    pcall(function()
+        local gs = peek(Dependencies.GameState)
+        if typeof(gs) == "table" and gs.Gamemode then
+            mode = tostring(gs.Gamemode)
+        end
+    end)
+    pcall(function()
+        local ms = peek(Dependencies.MapState)
+        if typeof(ms) == "table" and ms.Gamemode then
+            mode = tostring(ms.Gamemode)
+        end
+    end)
+    return mode
+end
+
 local inGameStarted = false
 local function runInGame()
     if inGameStarted then
@@ -1031,14 +1048,17 @@ local function runInGame()
     end
     inGameStarted = true
 
-    print("[AE Kaitun] In-game mode")
+    local mode = getMatchGamemode()
+    print("[AE Kaitun] In-game mode: Gamemode =", mode)
+
     -- Boost รันพื้นหลัง — ไม่บล็อควางยูนิต
     task.spawn(boostFPS)
     task.spawn(applyUnitSettings)
     setupAutoVoteStart()
     setupEndScreenHandler()
-    -- ตรวจ CompletedMaps ทุกครั้งที่เข้าแมตช์ (กัน AutoNext ไปแมพอื่นหลัง Act 5)
-    if getAutoFarm().Enabled then
+
+    -- ตรวจ CompletedMaps เฉพาะโหมด Story (ป้องกันซ้อนทับเมื่อเล่น Challenge / Trial)
+    if mode == "Story" and getAutoFarm().Enabled then
         applyStoryProgressSettings(true)
     end
 
@@ -1093,7 +1113,7 @@ local function runInGame()
         local returnedForGrind = false
         local returnedForClear = false
         while isInGame() do
-            if getAutoFarm().Enabled and (os.clock() - lastCheck) >= 5 then
+            if mode == "Story" and getAutoFarm().Enabled and (os.clock() - lastCheck) >= 5 then
                 lastCheck = os.clock()
                 local wasGrind = isInGrindMode()
                 applyStoryProgressSettings(false)

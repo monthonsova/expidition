@@ -321,30 +321,11 @@ local function getHotbarSlots()
     local hotbar = peek(Dependencies.HotbarState)
     local slots = hotbar and hotbar.Slots
 
-    if not getgenv()._AE_HB_DEBUG then
-        getgenv()._AE_HB_DEBUG = true
-        print("[AE Kaitun] Hotbar | playerLvl=", getPlayerLevel(), "(ล็อกเลเวลใน UI ยังวางได้)")
-        if typeof(slots) == "table" then
-            for i = 1, 6 do
-                local data = slots[tostring(i)] or slots[i]
-                local asset = getSlotAsset(i)
-                local need = getSlotRequiredLevel(i)
-                local usable = isSlotUsable(i)
-                print(("[AE Kaitun] Slot %d → asset=%s uiLockLvl=%s usable=%s disabled=%s"):format(
-                    i, tostring(asset), tostring(need), tostring(usable),
-                    tostring(typeof(data) == "table" and data.Disabled)
-                ))
-            end
-        end
-    end
-
     if typeof(slots) == "table" then
         for i = 1, 6 do
-            if isSlotUsable(i) then
-                local asset = getSlotAsset(i)
-                if asset and asset ~= "" then
-                    table.insert(list, i)
-                end
+            local asset = getSlotAsset(i)
+            if asset and asset ~= "" then
+                table.insert(list, i)
             end
         end
     end
