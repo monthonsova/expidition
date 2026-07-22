@@ -14,6 +14,11 @@ local getCachedInformation = Utils.getCachedInformation
 local isInGame = Replicas.isInGame
 local getPlayerData = Replicas.getPlayerData
 
+local function getLobbyModule()
+    return _G.AEKaitun_Loader and _G.AEKaitun_Loader.require("src/Lobby.lua")
+        or loadstring(readfile("expidition/src/Lobby.lua"))()
+end
+
 -- ------------------------------------------------------------------------
 -- Helper Functions
 -- ------------------------------------------------------------------------
@@ -87,7 +92,6 @@ local function getUnEvolvedMythicsAndSecrets()
                     isAlreadyEvolved = true
                 end
 
-                -- Fallback: If unit is Mythic/Secret and not marked evolved, assume evolvable
                 if not isAlreadyEvolved then
                     hasRecipe = true
                 end
@@ -176,7 +180,7 @@ local function quickCraftIngredients(requirements)
 end
 
 -- ------------------------------------------------------------------------
--- Targeted Challenge Selection & Matchmaking for Missing Materials
+-- Targeted Challenge Selection & Match Launching for Missing Materials
 -- ------------------------------------------------------------------------
 local function findChallengeStageDroppingItem(missingItemName)
     if not missingItemName or missingItemName == "" then
@@ -243,16 +247,31 @@ local function startChallengeMatchmaking(missingItemName)
         Difficulty = "Normal",
     }
 
+    print(("[AE Kaitun AutoEvolve] Creating Party & Launching Challenge Match (Type=%s, Index=%d)..."):format(
+        tostring(targetType), tonumber(targetIndex)
+    ))
+
     local ok = pcall(function()
+        local Lobby = getLobbyModule()
+        if Lobby and Lobby.startViaParty then
+            return Lobby.startViaParty(matchTable)
+        end
+        if Nodes.PARTY_CREATE then
+            local req = Nodes.PARTY_CREATE:Request(matchTable)
+            if req and req.Timeout then req:Timeout(8) end
+            task.wait(0.5)
+            local p = Replicas.getPartyReplica(1)
+            if p then
+                p:FireServer("StartGame")
+                return true
+            end
+        end
         if Nodes.REQUEST_ENTER_MATCHMAKING then
             return Nodes.REQUEST_ENTER_MATCHMAKING:Request(matchTable)
         end
-        if Core.Actions and Core.Actions.StartMatchmaking then
-            return Core.Actions.StartMatchmaking(matchTable)
-        end
     end)
 
-    print(("[AE Kaitun AutoEvolve] Challenge Matchmaking Request Sent (Ok=%s)"):format(tostring(ok)))
+    print(("[AE Kaitun AutoEvolve] Challenge Match Launch Sent (Ok=%s)"):format(tostring(ok)))
     return ok
 end
 
@@ -296,7 +315,6 @@ local function runAutoEvolveLoop()
 
     local targets = getUnEvolvedMythicsAndSecrets()
     if #targets == 0 then
-        print("[AE Kaitun AutoEvolve] No unevolved Mythic/Secret units in inventory.")
         return
     end
 
@@ -322,7 +340,6 @@ local function runAutoEvolveLoop()
                 end
             end
         else
-            -- If recipe requirements list is empty (e.g. general evolution requirement), assign default missing item
             allMet = false
             firstMissingItem = "EvolveItem"
         end
@@ -346,8 +363,8 @@ local function runAutoEvolveLoop()
                 end
             end
 
-            -- If materials still missing -> Queue Challenge mode to farm materials
-            print(("[AE Kaitun AutoEvolve] Missing material (%s) for %s -> Entering Challenge Matchmaking"):format(
+            -- If materials still missing -> Create party & Launch Challenge match immediately!
+            print(("[AE Kaitun AutoEvolve] Missing material (%s) for %s -> Launching Challenge Match"):format(
                 tostring(firstMissingItem), entry.Asset
             ))
             startChallengeMatchmaking(firstMissingItem)
