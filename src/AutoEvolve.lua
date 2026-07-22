@@ -247,31 +247,20 @@ local function startChallengeMatchmaking(missingItemName)
         Difficulty = "Normal",
     }
 
-    print(("[AE Kaitun AutoEvolve] Creating Party & Launching Challenge Match (Type=%s, Index=%d)..."):format(
+    print(("[AE Kaitun AutoEvolve] เข้าคิว Public Matchmaking สำหรับ Challenge (Type=%s, Index=%d) — รอผู้เล่นร่วมทีม..."):format(
         tostring(targetType), tonumber(targetIndex)
     ))
 
     local ok = pcall(function()
-        local Lobby = getLobbyModule()
-        if Lobby and Lobby.startViaParty then
-            return Lobby.startViaParty(matchTable)
-        end
-        if Nodes.PARTY_CREATE then
-            local req = Nodes.PARTY_CREATE:Request(matchTable)
-            if req and req.Timeout then req:Timeout(8) end
-            task.wait(0.5)
-            local p = Replicas.getPartyReplica(1)
-            if p then
-                p:FireServer("StartGame")
-                return true
-            end
-        end
         if Nodes.REQUEST_ENTER_MATCHMAKING then
             return Nodes.REQUEST_ENTER_MATCHMAKING:Request(matchTable)
         end
+        if Core.Actions and Core.Actions.StartMatchmaking then
+            return Core.Actions.StartMatchmaking(matchTable)
+        end
     end)
 
-    print(("[AE Kaitun AutoEvolve] Challenge Match Launch Sent (Ok=%s)"):format(tostring(ok)))
+    print(("[AE Kaitun AutoEvolve] Public Matchmaking Queue Registered (Ok=%s)"):format(tostring(ok)))
     return ok
 end
 
