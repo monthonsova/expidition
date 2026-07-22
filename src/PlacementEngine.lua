@@ -1048,26 +1048,38 @@ local function snapToPlaceableGround(worldPos, asset)
     return nil
 end
 
--- strategy: สร้างจุดวาง "ตามจุดที่ศัตรูเดินผ่าน" — หว่าน seed รอบมอนทุกตัวที่อยู่ในสนาม
--- แล้วเลือกจุดที่ชิดเส้นทาง (path) ที่สุด → unit ยืนข้างเลนที่มอนเดินผ่าน (ไม่วางดักหน้าฐาน)
--- ไม่มีมอน → คืน {} (ไม่วาง จนกว่ามอนจะออกมา)
 -- strategy: โฟกัส "ตัวนำหน้าสุด" (ใกล้ฐาน/ปลาย path สุด) ตัวเดียว
--- ไม่สน cluster/มอนทั้งกลุ่ม — หว่าน seed รอบตัวนำหน้าสุดแล้ววางรุมตรงนั้น
+-- ไม่มีมอน (เช่น ต้นเวฟ / พักเวฟ) → ใช้จุดเริ่มต้นของ path หรือ GroundPlacement เป็น anchor วางดักล่วงหน้าได้ทันที!
 local function buildAAStylePlaceCFrames(asset, count)
     count = math.clamp(count or 8, 1, 14)
     local pathPoints = getPathPoints()
     local enemies = getEnemyPositions()
-    if #enemies == 0 then
+
+    local anchor = nil
+    if #enemies > 0 then
+        local pathEnds = getPathEndPositions(pathPoints)
+        anchor = getFrontmostEnemy(enemies, pathEnds) or enemies[1]
+    elseif #pathPoints > 0 then
+        -- ไม่มีมอนในสนาม → ใช้จุดเริ่มต้น path วางดักล่วงหน้า
+        anchor = pathPoints[1] or pathPoints[math.ceil(#pathPoints / 2)]
+    else
+        -- Fallback: ใช้ตำแหน่ง GroundPlacement ชิ้นแรก
+        pcall(function()
+            local parts = select(1, getPlaceableParts(asset))
+            if parts and parts[1] and parts[1]:IsA("BasePart") then
+                anchor = parts[1].Position
+            end
+        end)
+    end
+
+    if not anchor then
         return {}
     end
+
     local size = getUnitBoxSize(asset)
     local halfY = size.Y / 2
 
-    -- anchor เดียว = ตัวที่นำหน้าสุด (เดินถึงฐานก่อนเพื่อน)
-    local pathEnds = getPathEndPositions(pathPoints)
-    local anchor = getFrontmostEnemy(enemies, pathEnds) or enemies[1]
-
-    -- หว่าน seed รอบตัวนำหน้าสุด (NEAR + FAR ให้จุดพอ เพราะ anchor เดียว)
+    -- หว่าน seed รอบ anchor (NEAR + FAR ให้จุดพอ)
     local seeds = {}
     for _, off in ipairs(ENEMY_OFFSETS_NEAR) do
         table.insert(seeds, anchor + off)
