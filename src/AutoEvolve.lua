@@ -46,7 +46,7 @@ local function getAssetRarity(asset)
 end
 
 -- ------------------------------------------------------------------------
--- Scan Mythic & Secret Units that are NOT yet Evolved
+-- Scan Mythic & Secret Units that CAN be Evolved & are NOT Yet Evolved
 -- ------------------------------------------------------------------------
 local function getUnEvolvedMythicsAndSecrets()
     local targets = {}
@@ -63,14 +63,36 @@ local function getUnEvolvedMythicsAndSecrets()
         if typeof(unit) == "table" and unit.Asset then
             local rarity = getAssetRarity(unit.Asset)
             if rarity == "Mythic" or rarity == "Secret" then
-                local isEvolved = false
+                local hasRecipe = false
+                local isAlreadyEvolved = false
+
                 pcall(function()
-                    if Evolutions and Evolutions.IsEvolvedUnit then
-                        isEvolved = Evolutions:IsEvolvedUnit(unit.Asset)
+                    if Evolutions then
+                        if Evolutions.GetEvolvedUnit then
+                            local target = Evolutions:GetEvolvedUnit(unit.Asset)
+                            if target and target ~= "" then
+                                hasRecipe = true
+                            end
+                        end
+                        if Evolutions.GetRecipe and Evolutions:GetRecipe(unit.Asset) ~= nil then
+                            hasRecipe = true
+                        end
+                        if Evolutions.GetUnevolvedUnit and Evolutions:GetUnevolvedUnit(unit.Asset) ~= nil then
+                            isAlreadyEvolved = true
+                        end
                     end
                 end)
 
-                if not isEvolved and unit.Evolved ~= true then
+                if tostring(unit.Asset):find("Evolved") or unit.Evolved == true then
+                    isAlreadyEvolved = true
+                end
+
+                -- Fallback: If unit is Mythic/Secret and not marked evolved, assume evolvable
+                if not isAlreadyEvolved then
+                    hasRecipe = true
+                end
+
+                if hasRecipe and not isAlreadyEvolved then
                     local targetEvolved = nil
                     pcall(function()
                         if Evolutions and Evolutions.GetEvolvedUnit then
@@ -170,7 +192,6 @@ local function findChallengeStageDroppingItem(missingItemName)
                 if typeof(stages) == "table" then
                     for idx, stage in pairs(stages) do
                         if typeof(stage) == "table" then
-                            -- Check Stage Rewards / Drops
                             local rewards = stage.Rewards or stage.Drops or stage.Items
                             if typeof(rewards) == "table" then
                                 for _, r in pairs(rewards) do
@@ -215,14 +236,23 @@ local function startChallengeMatchmaking(missingItemName)
         ))
     end
 
+    local matchTable = {
+        Gamemode = "Challenge",
+        ChallengeType = targetType,
+        ChallengeIndex = targetIndex,
+        Difficulty = "Normal",
+    }
+
     local ok = pcall(function()
-        Nodes.REQUEST_ENTER_MATCHMAKING:Request({
-            Gamemode = "Challenge",
-            ChallengeType = targetType,
-            ChallengeIndex = targetIndex,
-            Difficulty = "Normal",
-        })
+        if Nodes.REQUEST_ENTER_MATCHMAKING then
+            return Nodes.REQUEST_ENTER_MATCHMAKING:Request(matchTable)
+        end
+        if Core.Actions and Core.Actions.StartMatchmaking then
+            return Core.Actions.StartMatchmaking(matchTable)
+        end
     end)
+
+    print(("[AE Kaitun AutoEvolve] Challenge Matchmaking Request Sent (Ok=%s)"):format(tostring(ok)))
     return ok
 end
 
@@ -266,6 +296,7 @@ local function runAutoEvolveLoop()
 
     local targets = getUnEvolvedMythicsAndSecrets()
     if #targets == 0 then
+        print("[AE Kaitun AutoEvolve] No unevolved Mythic/Secret units in inventory.")
         return
     end
 
@@ -290,6 +321,10 @@ local function runAutoEvolveLoop()
                     ))
                 end
             end
+        else
+            -- If recipe requirements list is empty (e.g. general evolution requirement), assign default missing item
+            allMet = false
+            firstMissingItem = "EvolveItem"
         end
 
         if allMet then
@@ -300,7 +335,6 @@ local function runAutoEvolveLoop()
             local crafted = quickCraftIngredients(reqs)
             if crafted then
                 task.wait(1.5)
-                -- Re-check requirements after crafting
                 local reqsAfter = checkEvolutionRequirements(entry.Asset)
                 local nowMet = true
                 for _, r in ipairs(reqsAfter) do
@@ -312,11 +346,12 @@ local function runAutoEvolveLoop()
                 end
             end
 
-            -- If materials still missing -> Find target Challenge stage or cycle Challenges
-            if firstMissingItem then
-                startChallengeMatchmaking(firstMissingItem)
-                break
-            end
+            -- If materials still missing -> Queue Challenge mode to farm materials
+            print(("[AE Kaitun AutoEvolve] Missing material (%s) for %s -> Entering Challenge Matchmaking"):format(
+                tostring(firstMissingItem), entry.Asset
+            ))
+            startChallengeMatchmaking(firstMissingItem)
+            break
         end
     end
 end
