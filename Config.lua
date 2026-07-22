@@ -80,8 +80,17 @@ local defaultSettings = {
         PreferHighWorthiness = true,
     },
     -- SmartPlay จะ evolve Mythic → Secret/Exclusive ให้ ถ้าวัตถุดิบครบ
-    -- ปิดไว้ก่อน: evolve ต้องใช้ของจาก Challenge ที่ยังไม่ได้ทำ (เปิดทีหลังพร้อม TryEvolve)
-    ["Auto Evolve To Secret"] = false,
+    ["Auto Evolve To Secret"] = true,
+
+    -- ระบบ Auto-Evolve & Challenge Farming
+    ["Auto Evolve Mythic/Secret"] = true,
+    ["Auto Quick Craft Ingredients"] = true,
+    ["Auto Farm Challenge For Evolution"] = true,
+    ["Challenge Mode Type"] = "Regular",
+    ["Challenge Mode Index"] = 1,
+
+    -- ระบบเช็ค Gem ขั้นต่ำ 8 รอบสำหรับการสุ่มตัวละคร
+    ["Min Summon Rounds Required"] = 8,
 
     -- Auto Equip: ใส่ไอเทมเสริม/อาวุธที่ดีที่สุด → ยูนิตแข็งสุดไล่ทั้งทีม
     -- ยืนยันจาก decompile (expidition_lobby.rbxlx:1791706):

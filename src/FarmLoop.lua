@@ -8,6 +8,7 @@ local Lobby = _G.AEKaitun_Loader and _G.AEKaitun_Loader.require("src/Lobby.lua")
 local InGame = _G.AEKaitun_Loader and _G.AEKaitun_Loader.require("src/InGame.lua") or loadstring(readfile("expidition/src/InGame.lua"))()
 local SmartPlay = _G.AEKaitun_Loader and _G.AEKaitun_Loader.require("src/SmartPlay.lua") or loadstring(readfile("expidition/src/SmartPlay.lua"))()
 local Summon = _G.AEKaitun_Loader and _G.AEKaitun_Loader.require("src/Summon.lua") or loadstring(readfile("expidition/src/Summon.lua"))()
+local AutoEvolve = _G.AEKaitun_Loader and _G.AEKaitun_Loader.require("src/AutoEvolve.lua") or loadstring(readfile("expidition/src/AutoEvolve.lua"))()
 
 local isInGame = Replicas.isInGame
 local getAccountLevel = Replicas.getAccountLevel
@@ -89,6 +90,12 @@ local function runStoryFarmLoop()
     end
 
     print("[AE Kaitun] Farm All Story — Clear ตามเลเวล / Grind หลังครบ")
+    -- สแกนและดำเนินขั้นตอน Auto-Evolve / Quick Craft / Challenge สำหรับ Mythic และ Secret
+    pcall(function()
+        if not isInGame() then
+            AutoEvolve.runAutoEvolveLoop()
+        end
+    end)
     -- หลัง teleport soft-reset flag ค้างใน getgenv → รัน SmartPlay ก่อนคิวด่านแรก
     pcall(function()
         SmartPlay.consumeIfNeeded("farm-loop-start")

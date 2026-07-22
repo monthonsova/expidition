@@ -824,13 +824,18 @@ local function autoSummonAfterCodes()
     local rounds = tonumber(_G.Settings["Summon Rounds"]) or 8
     local delaySec = math.max(tonumber(_G.Settings["Summon Delay"]) or 4, 2)
 
-    -- เช็คเพชรก่อนสุ่ม: ไม่พอ = ข้ามเลย (ถ้ารู้ราคา) กันยิงรัวเสียเวลา
+    -- เช็คเพชรก่อนสุ่ม: ต้องมีเพชรพอสำหรับสุ่มอย่างน้อย 8 รอบเต็ม (หรือตามตั้งค่า Min Summon Rounds Required)
     local skipIfNoGems = _G.Settings["Skip Summon If No Gems"] ~= false
-    local costPerPull = getSummonCostPerPull(banner)
-    if skipIfNoGems and costPerPull then
+    local costPerPull = getSummonCostPerPull(banner) or 50
+    local minRoundsReq = math.max(1, tonumber(_G.Settings["Min Summon Rounds Required"]) or 8)
+    local requiredGemsForRounds = minRoundsReq * amount * costPerPull
+
+    if skipIfNoGems then
         local gems = getGemCount()
-        if gems < costPerPull then
-            print(("[AE Kaitun] เพชรไม่พอสุ่ม (มี %d < ราคา %d/ครั้ง) — ข้ามสุ่ม"):format(gems, costPerPull))
+        if gems < requiredGemsForRounds then
+            print(("[AE Kaitun] Gem ไม่พอสำหรับสุ่ม %d รอบ (มี %d < ต้องการ %d Gems) — ข้ามการสุ่ม"):format(
+                minRoundsReq, gems, requiredGemsForRounds
+            ))
             local Team = getTeamModule()
             if Team.ensureTeamReady then
                 Team.ensureTeamReady()
@@ -839,7 +844,9 @@ local function autoSummonAfterCodes()
             end
             return
         end
-        print(("[AE Kaitun] เพชร %d | ราคา ~%d/ครั้ง"):format(gems, costPerPull))
+        print(("[AE Kaitun] Gem %d | ราคา ~%d/ครั้ง | ครบพอสำหรับสุ่ม %d รอบ (ใช้ %d Gems)"):format(
+            gems, costPerPull, minRoundsReq, requiredGemsForRounds
+        ))
     end
 
     print("[AE Kaitun] Summon", banner, "×" .. amount, "สูงสุด", rounds, "รอบ | TeamMode=", teamMode)

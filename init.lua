@@ -113,6 +113,7 @@ local InGame = Loader.require("src/InGame.lua")
 local StatsUI = Loader.require("src/StatsUI.lua")
 local SmartPlay = Loader.require("src/SmartPlay.lua")
 local AutoEquip = Loader.require("src/AutoEquip.lua")
+local AutoEvolve = Loader.require("src/AutoEvolve.lua")
 local FarmLoop = Loader.require("src/FarmLoop.lua")
 
 -- Activate Anti-AFK, Auto-Rejoin, and Queue-On-Teleport Persistence
