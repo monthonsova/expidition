@@ -482,7 +482,7 @@ local function getUnitCombatStats(asset)
     return out
 end
 
--- เรียงช่อง: Magical ก่อน → ราคาแพง → ราคาถูก
+-- เรียงช่อง: ตัวผลิตเงิน (Farm) ก่อนเสมอ → Magical ก่อน → ราคาแพง → ราคาถูก
 local function getAffordableSlotsOrdered()
     local slots = getHotbarSlots()
     local magicalFirst = _G.Settings["Place Magical First"] ~= false
@@ -494,10 +494,14 @@ local function getAffordableSlotsOrdered()
             asset = asset,
             cost = getSlotPlacementCost(slot),
             arche = getUnitArchetype(asset),
+            isFarm = isFarmUnit(asset) and 1 or 0,
             magical = isMagicalUnit(asset) and 1 or 0,
         })
     end
     table.sort(ranked, function(a, b)
+        if a.isFarm ~= b.isFarm then
+            return a.isFarm > b.isFarm -- ตัวผลิตเงิน (Farm) ขึ้นก่อนเสมอ!
+        end
         if magicalFirst and a.magical ~= b.magical then
             return a.magical > b.magical -- Magical ก่อน
         end

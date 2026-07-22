@@ -41,6 +41,7 @@ local getGameYen = PlacementEngine.getGameYen
 local buildAAStylePlaceCFrames = PlacementEngine.buildAAStylePlaceCFrames
 local canPlaceAt = PlacementEngine.canPlaceAt
 local isMagicalUnit = PlacementEngine.isMagicalUnit
+local isFarmUnit = PlacementEngine.isFarmUnit
 
 local getAutoFarm = AutoFarmManager.getAutoFarm
 local getGrindStage = AutoFarmManager.getGrindStage
@@ -93,6 +94,79 @@ end
 local function enableAutoSkip()
     pcall(function()
         Nodes.CLIENT_TOGGLE_AUTO_SKIP_WAVES:FireServer()
+    end)
+end
+
+-- ------------------------------------------------------------------------
+-- Upgrade Manager: อัปเกรดตัวผลิตเงิน (Farm) ให้เต็มก่อนตัวโจมตีเสมอ!
+-- ------------------------------------------------------------------------
+local upgradeRunning = false
+
+local function manageUnitUpgrades()
+    if _G.Settings["Auto Upgrade"] == false then
+        return
+    end
+    local rep = getGamePlayerReplica()
+    if not rep then
+        return
+    end
+
+    local units = peek(Dependencies.GameUnits)
+    if typeof(units) ~= "table" then
+        return
+    end
+
+    local farmUnits = {}
+    local combatUnits = {}
+
+    for _, state in pairs(units) do
+        local data = unwrapVal(state)
+        if typeof(data) == "table" and isOwnPlacedUnit(data) then
+            local id = unwrapVal(data.ID) or unwrapVal(data.GameID)
+            local asset = unwrapVal(data.Asset) or unwrapVal(data.Name)
+            local isMaxed = unwrapVal(data.IsMaxed) == true or unwrapVal(data.MaxUpgrade) == true
+
+            if id ~= nil and not isMaxed then
+                if isFarmUnit(asset) then
+                    table.insert(farmUnits, { id = id, asset = asset })
+                else
+                    table.insert(combatUnits, { id = id, asset = asset })
+                end
+            end
+        end
+    end
+
+    -- Priority 1: อัปเกรดตัวผลิตเงิน (Farm) ก่อนเสมอ!
+    if #farmUnits > 0 then
+        for _, u in ipairs(farmUnits) do
+            pcall(function()
+                rep:FireServer("UpgradeGameUnit", u.id)
+            end)
+            task.wait(0.25)
+        end
+        return
+    end
+
+    -- Priority 2: เมื่ออัปเกรดตัวผลิตเงินครบแล้ว ค่อยอัปเกรดตัวโจมตี
+    if #combatUnits > 0 then
+        for _, u in ipairs(combatUnits) do
+            pcall(function()
+                rep:FireServer("UpgradeGameUnit", u.id)
+            end)
+            task.wait(0.25)
+        end
+    end
+end
+
+local function startUpgradeManager()
+    if upgradeRunning then return end
+    upgradeRunning = true
+    task.spawn(function()
+        while isInGame() do
+            pcall(manageUnitUpgrades)
+            task.wait(1.2)
+        end
+        upgradeRunning = false
     end)
 end
 
@@ -931,6 +1005,7 @@ local function runInGame()
 
     task.wait(0.25)
     autoPlaceUnits()
+    startUpgradeManager()
 
     -- AutoUpgrade ตั้งใน applyUnitSettings แล้ว — อย่ายิงซ้ำที่นี่
 
