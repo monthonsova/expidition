@@ -12,6 +12,9 @@ local defaultSettings = {
     -- ใส่โค้ดอัตโนมัติ (Nodes.CLAIM_CODE)
     ["Auto Redeem Codes"] = true,
     ["Codes"] = {
+        "WanderingFix",
+        "HAPPYBDAYCOOP",
+        "wfade",
         "100mvisits",
         "100K!",
         "30KLIKES!",
