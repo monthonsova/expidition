@@ -1029,44 +1029,94 @@ local function snapToPlaceableGround(worldPos, asset)
     return nil
 end
 
--- strategy: โฟกัส "ตัวนำหน้าสุด" (ใกล้ฐาน/ปลาย path สุด) ตัวเดียว
--- ไม่มีมอน (เช่น ต้นเวฟ / พักเวฟ) → ใช้จุดเริ่มต้นของ path หรือ GroundPlacement เป็น anchor วางดักล่วงหน้าได้ทันที!
+-- หาจุดที่ canPlaceAt ผ่าน — เรียงใกล้มอนใกล้ฐาน / ปลายทางก่อน (ตรง Kaitun.lua ต้นฉบับ)
 local function buildAAStylePlaceCFrames(asset, count)
     count = math.clamp(count or 8, 1, 14)
     local pathPoints = getPathPoints()
+    local pathEnds = getPathEndPositions(pathPoints)
     local enemies = getEnemyPositions()
-
-    local anchor = nil
-    if #enemies > 0 then
-        local pathEnds = getPathEndPositions(pathPoints)
-        anchor = getFrontmostEnemy(enemies, pathEnds) or enemies[1]
-    elseif #pathPoints > 0 then
-        -- ไม่มีมอนในสนาม → ใช้จุดเริ่มต้น path วางดักล่วงหน้า
-        anchor = pathPoints[1] or pathPoints[math.ceil(#pathPoints / 2)]
-    else
-        -- Fallback: ใช้ตำแหน่ง GroundPlacement ชิ้นแรก
-        pcall(function()
-            local parts = select(1, getPlaceableParts(asset))
-            if parts and parts[1] and parts[1]:IsA("BasePart") then
-                anchor = parts[1].Position
-            end
-        end)
-    end
-
-    if not anchor then
-        return {}
-    end
-
+    local threat = getThreatEnemies(enemies, pathEnds, 12)
     local size = getUnitBoxSize(asset)
     local halfY = size.Y / 2
-
-    -- หว่าน seed รอบ anchor (NEAR + FAR ให้จุดพอ)
     local seeds = {}
-    for _, off in ipairs(ENEMY_OFFSETS_NEAR) do
-        table.insert(seeds, anchor + off)
+
+    -- 1) มอนใกล้ฐานก่อน (threat)
+    for i = 1, #threat do
+        local ep = threat[i]
+        for _, off in ipairs(ENEMY_OFFSETS_NEAR) do
+            table.insert(seeds, ep + off)
+        end
     end
-    for _, off in ipairs(ENEMY_OFFSETS_FAR) do
-        table.insert(seeds, anchor + off)
+
+    -- 2) มอนทั่วไป
+    for i = 1, math.min(#enemies, 10) do
+        local ep = enemies[i]
+        for _, off in ipairs(ENEMY_OFFSETS_FAR) do
+            table.insert(seeds, ep + off)
+        end
+    end
+
+    -- 3) โซนฐาน (pathEnds) — สำคัญตอนรอบแรกยังไม่มีมอน
+    if #pathEnds > 0 then
+        for _, p in ipairs(pathEnds) do
+            local nxt = pathEnds[#pathEnds]
+            addSideSeeds(seeds, p, nxt, { 3.5, 5, 6.5, 8, 10 })
+            for _, off in ipairs(BASE_OFFSETS) do
+                table.insert(seeds, p + off)
+            end
+        end
+    end
+
+    -- 4) ทางทั้งเส้น (ถี่ขึ้นช่วงท้ายทาง)
+    if #pathPoints > 0 then
+        local step = math.max(1, math.floor(#pathPoints / 16))
+        local startIdx = 1
+        if #threat > 0 and #pathEnds > 0 then
+            local nearestThreat = minDistToPoints(threat[1], pathEnds)
+            if nearestThreat < 70 then
+                startIdx = math.max(1, math.floor(#pathPoints * 0.45))
+            end
+        end
+        for i = startIdx, #pathPoints, step do
+            local p = pathPoints[i]
+            local nxt = pathPoints[math.min(i + 1, #pathPoints)]
+            addSideSeeds(seeds, p, nxt, { 3.5, 5, 7, 9 })
+        end
+    end
+
+    -- 5) GroundPlacement ทุกชิ้นที่ใกล้ทาง/มอน/ฐาน
+    local parts, ptype = getPlaceableParts(asset)
+    local partN = 0
+    for _, part in ipairs(parts or {}) do
+        if partN >= 60 then break end
+        local base = part
+        if typeof(part) == "Instance" and part:IsA("Model") then
+            base = part.PrimaryPart or part:FindFirstChildWhichIsA("BasePart")
+        end
+        if base and base:IsA("BasePart") then
+            partN += 1
+            local dPath = (#pathPoints > 0) and distToNearestPath(base.Position, pathPoints) or 0
+            local dEnemy = (#enemies > 0) and minDistToPoints(base.Position, enemies) or 0
+            local dEnd = (#pathEnds > 0) and minDistToPoints(base.Position, pathEnds) or 0
+            if ptype == "Hill" or #pathPoints == 0 or dPath <= 45 or dEnemy <= 35 or dEnd <= 50 then
+                for _, u in ipairs({ -0.35, 0, 0.35 }) do
+                    for _, v in ipairs({ -0.35, 0, 0.35 }) do
+                        local localPos = Vector3.new(base.Size.X * u, base.Size.Y * 0.5 + 0.05, base.Size.Z * v)
+                        table.insert(seeds, (base.CFrame * localPos))
+                    end
+                end
+            end
+        end
+    end
+
+    -- 6) HumanoidRootPart (ตำแหน่งตัวละคร)
+    local char = LocalPlayer.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    if hrp then
+        local bp = hrp.Position
+        for _, off in ipairs(HRP_OFFSETS) do
+            table.insert(seeds, bp + off)
+        end
     end
 
     local candidates = {}
@@ -1082,9 +1132,10 @@ local function buildAAStylePlaceCFrames(asset, count)
             snapOk += 1
             local cf = makePlaceCFrame(ground, halfY)
             if canPlaceAt(asset, cf) then
-                -- ยิ่งชิดตัวนำหน้าสุดยิ่งดี (วางรุมตัวที่นำหน้า)
-                local score = (ground - anchor).Magnitude
-                table.insert(candidates, { cf = cf, score = score })
+                table.insert(candidates, {
+                    cf = cf,
+                    score = scorePlacePosition(ground, enemies, pathPoints, pathEnds, threat),
+                })
             end
         end
     end
@@ -1105,11 +1156,48 @@ local function buildAAStylePlaceCFrames(asset, count)
     end
 
     for _, row in ipairs(candidates) do
-        if #hard >= count then
-            break
-        end
+        if #hard >= count then break end
         if farEnough(hard, row.cf.Position) then
             table.insert(hard, row.cf)
+        end
+    end
+
+    -- emergency: hard=0 → scan GroundPlacement ถี่ๆ ใกล้ทาง/ฐาน
+    if #hard == 0 and typeof(parts) == "table" then
+        local emergency = {}
+        local scanned = 0
+        for _, part in ipairs(parts) do
+            if #emergency >= math.max(count, 6) then break end
+            local base = part
+            if typeof(part) == "Instance" and part:IsA("Model") then
+                base = part.PrimaryPart or part:FindFirstChildWhichIsA("BasePart")
+            end
+            if not (base and base:IsA("BasePart")) then continue end
+            local dPath = (#pathPoints > 0) and distToNearestPath(base.Position, pathPoints) or 0
+            local dEnd = (#pathEnds > 0) and minDistToPoints(base.Position, pathEnds) or 0
+            local dEnemy = (#enemies > 0) and minDistToPoints(base.Position, enemies) or 0
+            if #pathPoints > 0 and dPath > 55 and dEnd > 60 and dEnemy > 40 then continue end
+            for _, u in ipairs({ -0.4, -0.2, 0, 0.2, 0.4 }) do
+                for _, v in ipairs({ -0.4, -0.2, 0, 0.2, 0.4 }) do
+                    if #emergency >= math.max(count, 6) then break end
+                    scanned += 1
+                    if scanned % 30 == 0 then task.wait() end
+                    local localPos = Vector3.new(base.Size.X * u, base.Size.Y * 0.5 + 0.05, base.Size.Z * v)
+                    local seed = base.CFrame * localPos
+                    local ground = snapToPlaceableGround(seed, asset)
+                    if ground then
+                        local cf = makePlaceCFrame(ground, halfY)
+                        if canPlaceAt(asset, cf) and farEnough(emergency, cf.Position) then
+                            table.insert(emergency, cf)
+                        end
+                    end
+                end
+            end
+        end
+        hard = emergency
+        if not getgenv()._AE_EMERGENCY_PT then
+            getgenv()._AE_EMERGENCY_PT = true
+            print("[AE Kaitun] emergency points=", #hard, "| asset=", asset)
         end
     end
 
@@ -1117,8 +1205,13 @@ local function buildAAStylePlaceCFrames(asset, count)
     local now = os.clock()
     if (getgenv()[key] or 0) + 6 < now then
         getgenv()[key] = now
+        local best = hard[1] and scorePlacePosition(hard[1].Position, enemies, pathPoints, pathEnds, threat) or -1
+        local threatToBase = (#threat > 0 and #pathEnds > 0) and minDistToPoints(threat[1], pathEnds) or -1
         print("[AE Kaitun] points hard=", #hard, "| snap=", snapOk, "| seeds=", #seeds,
-            "| enemies=", #enemies, "(วางรุมตัวนำหน้าสุด)")
+            "| enemies=", #enemies, "| threat=", #threat,
+            "| threat->base~=", typeof(threatToBase) == "number" and string.format("%.1f", threatToBase) or threatToBase,
+            "| bestScore~=", typeof(best) == "number" and string.format("%.1f", best) or best,
+            "| grounds=", typeof(parts) == "table" and #parts or 0)
     end
 
     return hard
